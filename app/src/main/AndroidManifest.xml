@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission
+        android:name="android.permission.INTERNET"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.ACCESS_NETWORK_STATE"
+        tools:node="remove" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.front"
+        android:required="true" />
+
+    <queries>
+        <package android:name="com.android.systemui" />
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@drawable/ic_launcher"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Pixel2DFace"
+        android:usesCleartextTraffic="false">
+
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="Google Pixel / AOSP 系 Android 10–16 简体中文 2D 人脸锁屏解锁" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="93" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".FaceCaptureActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity="com.yusd.pixel2dface.capture"
+            android:theme="@style/Theme.Pixel2DFace.Capture"
+            />
+
+        <activity
+            android:name=".UnlockFaceCaptureActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:taskAffinity="com.yusd.pixel2dface.capture"
+            android:theme="@style/Theme.Pixel2DFace.Capture" />
+
+        <provider
+            android:name=".ConfigProvider"
+            android:authorities="com.yusd.pixel2dface.config"
+            android:directBootAware="false"
+            android:exported="true" />
+
+    </application>
+
+</manifest>
