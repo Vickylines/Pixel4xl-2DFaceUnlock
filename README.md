@@ -86,3 +86,13 @@ GitHub Release 中的 v0.6.0 APK 使用项目现有的 Android Debug 证书签�
 本项目自有源码采用 [MIT License](LICENSE)。AndroidX、CameraX、Google ML Kit 和 Xposed API 等第三方组件仍分别遵循其自身许可证；MIT 许可证不会改变这些依赖的授权条款。
 
 欢迎阅读 [贡献指南](CONTRIBUTING.md)、[安全说明](SECURITY.md)、[兼容性矩阵](COMPATIBILITY.md) 和 [真机测试报告](TEST-REPORT.md)。
+
+## 支持我
+
+如果您觉得这个项目对您有帮助，您可以扫描以下二维码进行捐赠：
+
+<p align="left">
+  <img src="assets/donate-alipay.png" alt="支付宝收款二维码" width="260">
+  &nbsp;&nbsp;
+  <img src="assets/donate-wechat.png" alt="微信支付收款二维码" width="260">
+</p>
