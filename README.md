@@ -1,10 +1,10 @@
-# Pixel 2D Face Unlock
+# Pixel4xl 2D Face Unlock
 
 [![Android CI](https://github.com/Vickylines/Pixel2DFaceUnlock/actions/workflows/android.yml/badge.svg)](https://github.com/Vickylines/Pixel2DFaceUnlock/actions/workflows/android.yml)
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel2DFaceUnlock)](https://github.com/Vickylines/Pixel2DFaceUnlock/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-这是一个面向已 Root、已安装 LSPosed 的 Google Pixel 设备的便利解锁模块。0.6.0 在原 Pixel 4 XL / Android 16 版本上增加了 Android 10–16 的 AOSP SystemUI 运行时适配。
+这是一个面向已 Root、已安装 LSPosed 的 Google Pixel4xl 设备的便利解锁模块。0.6.0 在原 Pixel 4 XL / Android 16 版本上增加了 Android 10–16 的 AOSP SystemUI 运行时适配。
 
 > 本项目不是 Google、LineageOS、Magisk 或 LSPosed 的官方项目。普通 RGB 2D 人脸可能被照片或视频绕过，只适合便利解锁。
 
@@ -16,7 +16,7 @@
 
 ## 适配边界
 
-- 目标设备：带前置摄像头的 Google Pixel 设备（arm64-v8a）。
+- 目标设备：带前置摄像头的 Google Pixel4xl 设备（arm64-v8a）。
 - 目标系统：Android 10–16（API 29–36）。
 - 优先 ROM：Pixel 原生系统以及 AOSP/LineageOS 类 SystemUI。
 - LSPosed 作用域：只勾选 `com.android.systemui`（系统界面）。
