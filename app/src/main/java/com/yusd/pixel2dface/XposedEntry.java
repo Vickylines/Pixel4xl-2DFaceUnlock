@@ -12,6 +12,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
 import android.os.PowerManager;
@@ -501,6 +502,12 @@ public final class XposedEntry implements IXposedHookLoadPackage {
                     | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
                     | Intent.FLAG_ACTIVITY_NO_ANIMATION);
             ActivityOptions options = ActivityOptions.makeCustomAnimation(context, 0, 0);
+            if (Build.VERSION.SDK_INT >= 36) {
+                // Android 16 requires an explicit opt-in for cross-UID touches outside a
+                // translucent launched Activity. The host window also uses WM alpha=0 so
+                // older Android releases follow their documented safe pass-through path.
+                options.setAllowPassThroughOnTouchOutside(true);
+            }
             context.startActivity(intent, options.toBundle());
         } catch (Throwable error) {
             synchronized (LOCK) {
@@ -522,6 +529,22 @@ public final class XposedEntry implements IXposedHookLoadPackage {
                 @Override
                 public void onReceive(Context receiverContext, Intent intent) {
                     String token = intent.getStringExtra(Constants.EXTRA_SESSION_TOKEN);
+                    if (Constants.ACTION_CAMERA_HOST_READY.equals(intent.getAction())) {
+                        boolean valid;
+                        synchronized (LOCK) {
+                            valid = cameraHostActive && activeToken != null
+                                    && activeToken.equals(token);
+                        }
+                        Bundle extras = intent.getExtras();
+                        IBinder activityToken = extras == null ? null
+                                : extras.getBinder(Constants.EXTRA_ACTIVITY_TOKEN);
+                        if (valid && activityToken != null) {
+                            disableCameraHostInputSink(activityToken);
+                        } else {
+                            log("Ignored camera-host ready signal with an invalid session");
+                        }
+                        return;
+                    }
                     if (Constants.ACTION_CAMERA_HOST_FINISHED.equals(intent.getAction())) {
                         boolean matched = false;
                         synchronized (LOCK) {
@@ -588,11 +611,28 @@ public final class XposedEntry implements IXposedHookLoadPackage {
             };
             IntentFilter filter = new IntentFilter(Constants.ACTION_UNLOCK_RESULT);
             filter.addAction(Constants.ACTION_CAMERA_HOST_FINISHED);
+            filter.addAction(Constants.ACTION_CAMERA_HOST_READY);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 context.registerReceiver(resultReceiver, filter, Context.RECEIVER_EXPORTED);
             } else {
                 context.registerReceiver(resultReceiver, filter);
             }
+        }
+    }
+
+    private static void disableCameraHostInputSink(IBinder activityToken) {
+        try {
+            Class<?> activityClientClass = XposedHelpers.findClass(
+                    "android.app.ActivityClient", null);
+            Object activityClient = XposedHelpers.callStaticMethod(
+                    activityClientClass, "getInstance");
+            XposedHelpers.callMethod(activityClient, "setActivityRecordInputSinkEnabled",
+                    activityToken, false);
+            log("Disabled camera-host ActivityRecordInputSink");
+        } catch (Throwable error) {
+            // Older Android releases do not expose this controller method. The host still uses
+            // a 1x1 window with alpha 0, which is the documented cross-version fallback.
+            log("Camera-host input-sink controller unavailable", error);
         }
     }
 

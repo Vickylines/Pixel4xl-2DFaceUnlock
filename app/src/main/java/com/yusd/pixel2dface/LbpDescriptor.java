@@ -1,6 +1,7 @@
 package com.yusd.pixel2dface;
 
 import android.graphics.Rect;
+import android.graphics.PointF;
 
 import androidx.camera.core.ImageProxy;
 
@@ -35,6 +36,16 @@ public final class LbpDescriptor {
         private float sharpness;
 
         public float[] compute(ImageProxy image, int rotationDegrees, Rect uprightCrop) {
+            return compute(image, rotationDegrees, uprightCrop, null, null);
+        }
+
+        /**
+         * Normalizes scale and in-plane rotation from the detected eye positions before LBP.
+         * This removes most crop jitter, so a tighter identity limit remains usable in ordinary
+         * lighting and while the phone is held at a small angle.
+         */
+        public float[] compute(ImageProxy image, int rotationDegrees, Rect uprightCrop,
+                PointF firstEye, PointF secondEye) {
             ImageProxy.PlaneProxy[] planes = image.getPlanes();
             if (planes.length == 0) {
                 throw new IllegalArgumentException("Y plane is unavailable");
@@ -59,13 +70,28 @@ public final class LbpDescriptor {
                 throw new IllegalArgumentException("Face crop is empty");
             }
 
+            Alignment alignment = Alignment.create(firstEye, secondEye, crop);
+
             long sum = 0L;
             long squareSum = 0L;
             for (int y = 0; y < SIZE; y++) {
-                float uprightY = crop.top + (y + 0.5f) * crop.height() / SIZE;
                 int row = y * SIZE;
                 for (int x = 0; x < SIZE; x++) {
-                    float uprightX = crop.left + (x + 0.5f) * crop.width() / SIZE;
+                    float uprightX;
+                    float uprightY;
+                    if (alignment != null) {
+                        float normalizedX = (x + 0.5f) / SIZE - 0.5f;
+                        float normalizedY = (y + 0.5f) / SIZE - 0.38f;
+                        uprightX = alignment.centerX
+                                + alignment.axisX * normalizedX * alignment.faceScale
+                                - alignment.axisY * normalizedY * alignment.faceScale;
+                        uprightY = alignment.centerY
+                                + alignment.axisY * normalizedX * alignment.faceScale
+                                + alignment.axisX * normalizedY * alignment.faceScale;
+                    } else {
+                        uprightX = crop.left + (x + 0.5f) * crop.width() / SIZE;
+                        uprightY = crop.top + (y + 0.5f) * crop.height() / SIZE;
+                    }
                     float rawX;
                     float rawY;
                     if (rotation == 90) {
@@ -164,26 +190,38 @@ public final class LbpDescriptor {
         }
     }
 
-    public static float distance(float[] first, float[] second) {
-        if (first.length != second.length) {
-            return Float.MAX_VALUE;
-        }
-        double sum = 0d;
-        for (int i = 0; i < first.length; i++) {
-            double a = first[i];
-            double b = second[i];
-            double delta = a - b;
-            sum += (delta * delta) / (a + b + 1e-8d);
-        }
-        return (float) (0.5d * sum / (GRID * GRID));
-    }
+    private static final class Alignment {
+        final float centerX;
+        final float centerY;
+        final float axisX;
+        final float axisY;
+        final float faceScale;
 
-    public static float bestDistance(float[] candidate, List<float[]> templates) {
-        float best = Float.MAX_VALUE;
-        for (float[] template : templates) {
-            best = Math.min(best, distance(candidate, template));
+        Alignment(float centerX, float centerY, float axisX, float axisY, float faceScale) {
+            this.centerX = centerX;
+            this.centerY = centerY;
+            this.axisX = axisX;
+            this.axisY = axisY;
+            this.faceScale = faceScale;
         }
-        return best;
+
+        static Alignment create(PointF first, PointF second, Rect faceBox) {
+            if (first == null || second == null) {
+                return null;
+            }
+            PointF left = first.x <= second.x ? first : second;
+            PointF right = first.x <= second.x ? second : first;
+            float dx = right.x - left.x;
+            float dy = right.y - left.y;
+            float distance = (float) Math.hypot(dx, dy);
+            if (distance < Math.max(18f, faceBox.width() * 0.20f)
+                    || distance > faceBox.width() * 0.78f) {
+                return null;
+            }
+            return new Alignment((left.x + right.x) * 0.5f,
+                    (left.y + right.y) * 0.5f, dx / distance, dy / distance,
+                    distance / 0.36f);
+        }
     }
 
     public static float[] mean(List<float[]> descriptors) {

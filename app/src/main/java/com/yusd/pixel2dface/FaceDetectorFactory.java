@@ -12,7 +12,7 @@ final class FaceDetectorFactory {
     static FaceDetector create() {
         return FaceDetection.getClient(new FaceDetectorOptions.Builder()
                 .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
+                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
                 .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
                 .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
                 .setMinFaceSize(0.20f)

@@ -15,8 +15,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Properties;
 
 public final class TemplateStore {
@@ -30,15 +28,26 @@ public final class TemplateStore {
     private static final long UNLOCK_SESSION_VALID_MS = 15_000L;
 
     private static final String KEY_ENABLED = "enabled";
+    private static final String KEY_TEMPLATE_VERSION = "template_version";
     private static final String KEY_TEMPLATE_COUNT = "template_count";
     private static final String KEY_TEMPLATE_PREFIX = "template_";
-    private static final String KEY_THRESHOLD = "threshold";
+    private static final String KEY_CALIBRATED_THRESHOLD = "calibrated_threshold";
+    private static final String KEY_CELL_WEIGHTS = "cell_weights";
+    private static final String KEY_CELL_LIMITS = "cell_limits";
+    private static final String KEY_GEOMETRY_CENTROID = "geometry_centroid";
+    private static final String KEY_GEOMETRY_SCALES = "geometry_scales";
+    private static final String KEY_GEOMETRY_THRESHOLD = "geometry_threshold";
+    private static final String KEY_RECOGNITION_PROFILE = "recognition_profile";
     private static final String KEY_ANIMATION_STYLE = "animation_style";
     private static final String KEY_FAILURES = "failures";
     private static final String KEY_LOCKOUT_UNTIL = "lockout_until";
     private static final String KEY_HOOK_HEARTBEAT = "hook_heartbeat";
 
-    public static final float DEFAULT_THRESHOLD = 0.42f;
+    public static final int CURRENT_TEMPLATE_VERSION = 3;
+    public static final float DEFAULT_THRESHOLD = 0.33f;
+    public static final int RECOGNITION_PROFILE_STRICT = 0;
+    public static final int RECOGNITION_PROFILE_BALANCED = 1;
+    public static final int RECOGNITION_PROFILE_COMFORT = 2;
     public static final int ANIMATION_STYLE_FACE_ID = 0;
     public static final int ANIMATION_STYLE_DYNAMIC_ISLAND = 1;
 
@@ -56,17 +65,55 @@ public final class TemplateStore {
     }
 
     public static boolean isEnrolled(Context context) {
-        return getInt(read(context), KEY_TEMPLATE_COUNT, 0) > 0;
-    }
-
-    public static float getThreshold(Context context) {
-        return getFloat(read(context), KEY_THRESHOLD, DEFAULT_THRESHOLD);
-    }
-
-    public static void setThreshold(Context context, float threshold) {
         Properties properties = read(context);
-        properties.setProperty(KEY_THRESHOLD, Float.toString(threshold));
+        return getInt(properties, KEY_TEMPLATE_VERSION, 1) == CURRENT_TEMPLATE_VERSION
+                && getInt(properties, KEY_TEMPLATE_COUNT, 0) > 0;
+    }
+
+    public static boolean hasLegacyTemplates(Context context) {
+        Properties properties = read(context);
+        return getInt(properties, KEY_TEMPLATE_COUNT, 0) > 0
+                && getInt(properties, KEY_TEMPLATE_VERSION, 1) != CURRENT_TEMPLATE_VERSION;
+    }
+
+    public static float getCalibratedThreshold(Context context) {
+        return clamp(getFloat(read(context), KEY_CALIBRATED_THRESHOLD, DEFAULT_THRESHOLD),
+                0.28f, 0.35f);
+    }
+
+    public static int getRecognitionProfile(Context context) {
+        int profile = getInt(read(context), KEY_RECOGNITION_PROFILE,
+                RECOGNITION_PROFILE_BALANCED);
+        if (profile == RECOGNITION_PROFILE_STRICT
+                || profile == RECOGNITION_PROFILE_COMFORT) {
+            return profile;
+        }
+        return RECOGNITION_PROFILE_BALANCED;
+    }
+
+    public static void setRecognitionProfile(Context context, int profile) {
+        int safeProfile = profile == RECOGNITION_PROFILE_STRICT
+                || profile == RECOGNITION_PROFILE_COMFORT
+                ? profile : RECOGNITION_PROFILE_BALANCED;
+        Properties properties = read(context);
+        properties.setProperty(KEY_RECOGNITION_PROFILE, Integer.toString(safeProfile));
         write(context, properties);
+    }
+
+    public static float getRecognitionThreshold(Context context) {
+        float profileCap;
+        switch (getRecognitionProfile(context)) {
+            case RECOGNITION_PROFILE_STRICT:
+                profileCap = 0.30f;
+                break;
+            case RECOGNITION_PROFILE_COMFORT:
+                profileCap = 0.35f;
+                break;
+            default:
+                profileCap = 0.33f;
+                break;
+        }
+        return Math.min(getCalibratedThreshold(context), profileCap);
     }
 
     public static int getAnimationStyle(Context context) {
@@ -83,35 +130,69 @@ public final class TemplateStore {
         write(context, properties);
     }
 
-    public static void saveTemplates(Context context, List<float[]> templates) {
+    public static void saveIdentityModel(Context context, IdentityModel model) {
         Properties properties = read(context);
         int oldCount = getInt(properties, KEY_TEMPLATE_COUNT, 0);
         for (int i = 0; i < oldCount; i++) {
             properties.remove(KEY_TEMPLATE_PREFIX + i);
         }
         properties.setProperty(KEY_ENABLED, Boolean.TRUE.toString());
-        properties.setProperty(KEY_TEMPLATE_COUNT, Integer.toString(templates.size()));
-        for (int i = 0; i < templates.size(); i++) {
-            properties.setProperty(KEY_TEMPLATE_PREFIX + i, encode(templates.get(i)));
-        }
+        properties.setProperty(KEY_TEMPLATE_VERSION,
+                Integer.toString(CURRENT_TEMPLATE_VERSION));
+        properties.setProperty(KEY_TEMPLATE_COUNT, "1");
+        properties.setProperty(KEY_CALIBRATED_THRESHOLD,
+                Float.toString(clamp(model.textureThreshold, 0.28f, 0.35f)));
+        properties.setProperty(KEY_TEMPLATE_PREFIX + "0", encode(model.textureCentroid));
+        properties.setProperty(KEY_CELL_WEIGHTS, encode(model.cellWeights));
+        properties.setProperty(KEY_CELL_LIMITS, encode(model.cellLimits));
+        properties.setProperty(KEY_GEOMETRY_CENTROID, encode(model.geometryCentroid));
+        properties.setProperty(KEY_GEOMETRY_SCALES, encode(model.geometryScales));
+        properties.setProperty(KEY_GEOMETRY_THRESHOLD,
+                Float.toString(clamp(model.geometryThreshold, 1.0f, 2.5f)));
         write(context, properties);
     }
 
-    public static List<float[]> loadTemplates(Context context) {
+    public static IdentityModel loadIdentityModel(Context context) {
         Properties properties = read(context);
-        int count = getInt(properties, KEY_TEMPLATE_COUNT, 0);
-        List<float[]> result = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
-            String encoded = properties.getProperty(KEY_TEMPLATE_PREFIX + i);
-            if (encoded != null && !encoded.isEmpty()) {
-                result.add(decode(encoded));
-            }
+        if (getInt(properties, KEY_TEMPLATE_VERSION, 1) != CURRENT_TEMPLATE_VERSION) {
+            return null;
         }
-        return result;
+        try {
+            float[] textureCentroid = decodeRequired(properties, KEY_TEMPLATE_PREFIX + "0");
+            float[] cellWeights = decodeRequired(properties, KEY_CELL_WEIGHTS);
+            float[] cellLimits = decodeRequired(properties, KEY_CELL_LIMITS);
+            float[] geometryCentroid = decodeRequired(properties, KEY_GEOMETRY_CENTROID);
+            float[] geometryScales = decodeRequired(properties, KEY_GEOMETRY_SCALES);
+            float textureThreshold = clamp(getFloat(properties, KEY_CALIBRATED_THRESHOLD,
+                    DEFAULT_THRESHOLD), 0.28f, 0.35f);
+            float geometryThreshold = clamp(getFloat(properties, KEY_GEOMETRY_THRESHOLD, 1.7f),
+                    1.0f, 2.5f);
+            return new IdentityModel(textureCentroid, cellWeights, cellLimits,
+                    geometryCentroid, geometryScales, textureThreshold, geometryThreshold);
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Invalid identity model", error);
+            return null;
+        }
     }
 
     public static void clearTemplates(Context context) {
-        write(context, new Properties());
+        Properties properties = read(context);
+        int oldCount = getInt(properties, KEY_TEMPLATE_COUNT, 0);
+        for (int i = 0; i < oldCount; i++) {
+            properties.remove(KEY_TEMPLATE_PREFIX + i);
+        }
+        properties.remove(KEY_TEMPLATE_COUNT);
+        properties.remove(KEY_TEMPLATE_VERSION);
+        properties.remove(KEY_CALIBRATED_THRESHOLD);
+        properties.remove(KEY_CELL_WEIGHTS);
+        properties.remove(KEY_CELL_LIMITS);
+        properties.remove(KEY_GEOMETRY_CENTROID);
+        properties.remove(KEY_GEOMETRY_SCALES);
+        properties.remove(KEY_GEOMETRY_THRESHOLD);
+        properties.remove(KEY_FAILURES);
+        properties.remove(KEY_LOCKOUT_UNTIL);
+        properties.setProperty(KEY_ENABLED, Boolean.FALSE.toString());
+        write(context, properties);
     }
 
     public static long getLockoutUntil(Context context) {
@@ -381,6 +462,10 @@ public final class TemplateStore {
         }
     }
 
+    private static float clamp(float value, float minimum, float maximum) {
+        return Math.max(minimum, Math.min(maximum, value));
+    }
+
     private static String encode(float[] values) {
         ByteBuffer buffer = ByteBuffer.allocate(values.length * Float.BYTES)
                 .order(ByteOrder.LITTLE_ENDIAN);
@@ -398,5 +483,13 @@ public final class TemplateStore {
             values[i] = buffer.getFloat();
         }
         return values;
+    }
+
+    private static float[] decodeRequired(Properties properties, String key) {
+        String encoded = properties.getProperty(key);
+        if (encoded == null || encoded.isEmpty()) {
+            throw new IllegalArgumentException("Missing model field: " + key);
+        }
+        return decode(encoded);
     }
 }

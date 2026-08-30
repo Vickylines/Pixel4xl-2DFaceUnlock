@@ -14,7 +14,6 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.SeekBar;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -26,13 +25,16 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_TEST = 101;
 
     private TextView statusView;
-    private TextView thresholdValue;
     private Switch enabledSwitch;
     private Button enrollButton;
     private Button testButton;
     private Button faceIdStyleButton;
     private Button islandStyleButton;
     private TextView animationStyleSummary;
+    private Button strictRecognitionButton;
+    private Button balancedRecognitionButton;
+    private Button comfortRecognitionButton;
+    private TextView recognitionProfileSummary;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -165,33 +167,40 @@ public final class MainActivity extends Activity {
         TextView passiveTitle = text("无动作安全校验", 15, Color.rgb(45, 55, 65));
         passiveTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         options.addView(passiveTitle, margins(0, 14, 0, 4));
-        options.addView(text("解锁时只需自然看向屏幕，不要求眨眼或转头。模块会自动检查正脸、"
-                        + "双眼睁开、画质和连续三帧一致性。",
+        options.addView(text("解锁时只需自然看向屏幕，不要求眨眼或转头。新版会按眼位对齐人脸，"
+                        + "并在 6 帧窗口内要求至少 4 帧身份一致；偶发坏帧不再清空进度。",
                 13, Color.rgb(92, 103, 115)));
 
-        thresholdValue = text("", 15, Color.rgb(45, 55, 65));
-        options.addView(thresholdValue, margins(0, 16, 0, 2));
-        SeekBar threshold = new SeekBar(this);
-        threshold.setMax(53);
-        float currentThreshold = Math.min(0.459f, TemplateStore.getThreshold(this));
-        threshold.setProgress(Math.round((currentThreshold - 0.30f) / 0.003f));
-        updateThresholdLabel(currentThreshold);
-        threshold.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                float value = 0.30f + progress * 0.003f;
-                updateThresholdLabel(value);
-                if (fromUser) {
-                    TemplateStore.setThreshold(MainActivity.this, value);
-                }
-            }
-
-            @Override public void onStartTrackingTouch(SeekBar seekBar) { }
-            @Override public void onStopTrackingTouch(SeekBar seekBar) { }
-        });
-        options.addView(threshold);
-        options.addView(text("数值越低越严格；为降低误识别，最高限制为 0.46。录入后先用“测试识别”确认。",
-                13, Color.rgb(100, 110, 120)));
+        TextView profileTitle = text("安全偏好", 15, Color.rgb(45, 55, 65));
+        profileTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        options.addView(profileTitle, margins(0, 16, 0, 8));
+        LinearLayout profileChooser = new LinearLayout(this);
+        profileChooser.setOrientation(LinearLayout.HORIZONTAL);
+        strictRecognitionButton = styleButton("严格");
+        balancedRecognitionButton = styleButton("均衡");
+        comfortRecognitionButton = styleButton("便捷");
+        LinearLayout.LayoutParams profileButtonParams = new LinearLayout.LayoutParams(
+                0, dp(48), 1f);
+        profileButtonParams.setMarginEnd(dp(6));
+        profileChooser.addView(strictRecognitionButton, profileButtonParams);
+        LinearLayout.LayoutParams balancedParams = new LinearLayout.LayoutParams(
+                0, dp(48), 1f);
+        balancedParams.setMarginEnd(dp(6));
+        profileChooser.addView(balancedRecognitionButton, balancedParams);
+        profileChooser.addView(comfortRecognitionButton, new LinearLayout.LayoutParams(
+                0, dp(48), 1f));
+        options.addView(profileChooser);
+        recognitionProfileSummary = text("", 13, Color.rgb(92, 103, 115));
+        options.addView(recognitionProfileSummary, margins(2, 9, 2, 0));
+        strictRecognitionButton.setOnClickListener(v -> selectRecognitionProfile(
+                TemplateStore.RECOGNITION_PROFILE_STRICT));
+        balancedRecognitionButton.setOnClickListener(v -> selectRecognitionProfile(
+                TemplateStore.RECOGNITION_PROFILE_BALANCED));
+        comfortRecognitionButton.setOnClickListener(v -> selectRecognitionProfile(
+                TemplateStore.RECOGNITION_PROFILE_COMFORT));
+        options.addView(text("人脸距离会在录入时自动校准，并始终受安全上限约束；不再直接调系数。"
+                        + "“便捷”仅放宽很小范围，不能把普通 2D 前摄变成 Face ID。",
+                13, Color.rgb(100, 110, 120)), margins(0, 9, 0, 0));
         root.addView(options);
 
         TextView steps = text("安装后操作：在 LSPosed 中启用本模块，仅勾选“系统界面”作用域，"
@@ -204,18 +213,22 @@ public final class MainActivity extends Activity {
 
     private void refreshState() {
         boolean enrolled = TemplateStore.isEnrolled(this);
+        boolean legacyTemplates = TemplateStore.hasLegacyTemplates(this);
         boolean enabled = TemplateStore.isEnabled(this);
         long heartbeat = TemplateStore.getHookHeartbeat(this);
         boolean hookSeen = System.currentTimeMillis() - heartbeat < 24L * 60L * 60L * 1000L;
         String compatibility = TemplateStore.getHookCompatibility(this);
         statusView.setText((hookSeen ? "● LSPosed 钩子已加载" : "○ 等待 LSPosed 加载")
-                + "\n" + (enrolled ? "已录入人脸" : "尚未录入人脸")
+                + "\n" + (enrolled ? "已录入新版人脸"
+                : legacyTemplates ? "检测到旧版人脸数据，请重新录入" : "尚未录入人脸")
                 + (hookSeen && !compatibility.isEmpty() ? "\n\n" + compatibility : ""));
         statusView.setTextColor(hookSeen ? Color.rgb(20, 125, 70) : Color.rgb(120, 75, 20));
         enabledSwitch.setChecked(enabled && enrolled);
-        enrollButton.setText(enrolled ? "重新录入人脸" : "录入人脸");
+        enrollButton.setText(enrolled ? "重新录入人脸"
+                : legacyTemplates ? "升级并重新录入" : "录入人脸");
         testButton.setEnabled(enrolled);
         updateAnimationStyleControls();
+        updateRecognitionProfileControls();
     }
 
     private void selectAnimationStyle(int style) {
@@ -241,6 +254,32 @@ public final class MainActivity extends Activity {
                 : "面容光环：更开阔的双层表盘、环形光轨与柔和呼吸动效。" );
     }
 
+    private void selectRecognitionProfile(int profile) {
+        TemplateStore.setRecognitionProfile(this, profile);
+        updateRecognitionProfileControls();
+    }
+
+    private void updateRecognitionProfileControls() {
+        if (strictRecognitionButton == null || balancedRecognitionButton == null
+                || comfortRecognitionButton == null || recognitionProfileSummary == null) {
+            return;
+        }
+        int profile = TemplateStore.getRecognitionProfile(this);
+        styleButtonState(strictRecognitionButton,
+                profile == TemplateStore.RECOGNITION_PROFILE_STRICT);
+        styleButtonState(balancedRecognitionButton,
+                profile == TemplateStore.RECOGNITION_PROFILE_BALANCED);
+        styleButtonState(comfortRecognitionButton,
+                profile == TemplateStore.RECOGNITION_PROFILE_COMFORT);
+        if (profile == TemplateStore.RECOGNITION_PROFILE_STRICT) {
+            recognitionProfileSummary.setText("严格：身份距离上限最低，适合更重视误识别风险。" );
+        } else if (profile == TemplateStore.RECOGNITION_PROFILE_COMFORT) {
+            recognitionProfileSummary.setText("便捷：允许较小的环境变化，仍需通过多帧一致性。" );
+        } else {
+            recognitionProfileSummary.setText("均衡（推荐）：自动校准与多帧确认兼顾速度和容错。" );
+        }
+    }
+
     private void startCapture(String mode, int requestCode) {
         Intent intent = new Intent(this, FaceCaptureActivity.class);
         intent.putExtra(Constants.EXTRA_MODE, mode);
@@ -262,12 +301,6 @@ public final class MainActivity extends Activity {
                     .setPositiveButton("确定", null).show();
         }
         refreshState();
-    }
-
-    private void updateThresholdLabel(float value) {
-        String level = value < 0.40f ? "严格" : value < 0.51f ? "均衡" : "宽松";
-        thresholdValue.setText(String.format(Locale.CHINA,
-                "识别灵敏度：%s（阈值 %.3f）", level, value));
     }
 
     private LinearLayout card() {
