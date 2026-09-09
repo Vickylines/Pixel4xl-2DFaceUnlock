@@ -61,6 +61,7 @@ public final class XposedEntry implements IXposedHookLoadPackage {
     private static BroadcastReceiver powerStateReceiver;
     private static UnlockFaceAnimationView keyguardAnimationView;
     private static String activeToken;
+    private static final UnlockResultGuard resultGuard = new UnlockResultGuard();
     private static long activeTokenCreatedAt;
     private static long lastLaunchAt;
     private static long passiveAuthenticatedAt;
@@ -276,6 +277,7 @@ public final class XposedEntry implements IXposedHookLoadPackage {
             lastWakeTriggerAt = now;
             passiveAuthenticatedAt = 0L;
             activeToken = null;
+            resultGuard.clear();
             configCheckInFlight = false;
             generation = ++wakeGeneration;
         }
@@ -489,6 +491,7 @@ public final class XposedEntry implements IXposedHookLoadPackage {
                     return;
                 }
                 activeToken = token;
+                resultGuard.start(token, now, generation);
                 activeTokenCreatedAt = now;
                 lastLaunchAt = now;
                 cameraHostActive = true;
@@ -512,6 +515,7 @@ public final class XposedEntry implements IXposedHookLoadPackage {
         } catch (Throwable error) {
             synchronized (LOCK) {
                 activeToken = null;
+                resultGuard.clear();
                 cameraHostActive = false;
             }
             removeKeyguardAnimation();
@@ -550,6 +554,7 @@ public final class XposedEntry implements IXposedHookLoadPackage {
                         synchronized (LOCK) {
                             if (activeToken != null && activeToken.equals(token)) {
                                 activeToken = null;
+                                resultGuard.clear();
                                 cameraHostActive = false;
                                 matched = true;
                             }
@@ -561,9 +566,12 @@ public final class XposedEntry implements IXposedHookLoadPackage {
                     }
                     boolean success = intent.getBooleanExtra(Constants.EXTRA_SUCCESS, false);
                     Object monitor;
+                    long resultGeneration;
                     synchronized (LOCK) {
-                        if (activeToken == null || !activeToken.equals(token)) {
-                            log("Ignored result with an invalid session token");
+                        if (activeToken == null || !activeToken.equals(token)
+                                || !resultGuard.consume(token,
+                                        android.os.SystemClock.elapsedRealtime(), wakeGeneration)) {
+                            log("Ignored invalid, expired, or already consumed face result");
                             return;
                         }
                         // Keep the transparent camera host marked active until the user really
@@ -573,6 +581,7 @@ public final class XposedEntry implements IXposedHookLoadPackage {
                         // Authentication itself can emit another keyguard callback. Start the
                         // cooldown at result time so a slow scan cannot reopen the overlay.
                         lastLaunchAt = android.os.SystemClock.elapsedRealtime();
+                        resultGeneration = wakeGeneration;
                         monitor = monitorReference.get();
                     }
                     if (!success || monitor == null) {
@@ -586,7 +595,7 @@ public final class XposedEntry implements IXposedHookLoadPackage {
                             // The user has already asked for the credential screen. A valid
                             // face result should complete that pending unlock immediately.
                             removeKeyguardAnimationNow();
-                            handler.post(() -> reportWeakFaceSuccess(monitor, true));
+                            handler.post(() -> reportWeakFaceSuccess(monitor, true, token, resultGeneration));
                             return;
                         }
                         showKeyguardSuccess();
@@ -594,7 +603,7 @@ public final class XposedEntry implements IXposedHookLoadPackage {
                         synchronized (LOCK) {
                             successGeneration = wakeGeneration;
                         }
-                        handler.post(() -> reportWeakFaceSuccess(monitor, false));
+                        handler.post(() -> reportWeakFaceSuccess(monitor, false, token, resultGeneration));
                         // Keep the success tick briefly on the lock screen. The synchronous
                         // setKeyguardShowing(false) hook above always wins if the user swipes
                         // to the launcher sooner.
@@ -636,8 +645,26 @@ public final class XposedEntry implements IXposedHookLoadPackage {
         }
     }
 
-    private static void reportWeakFaceSuccess(Object monitor, boolean dismissBouncer) {
+    private static void reportWeakFaceSuccess(Object monitor, boolean dismissBouncer,
+            String token, long resultGeneration) {
         try {
+            Context context;
+            synchronized (LOCK) {
+                if (wakeGeneration != resultGeneration || !resultGuard.mayDeliver(token,
+                        android.os.SystemClock.elapsedRealtime(), wakeGeneration)) {
+                    log("Cancelled stale queued face authentication");
+                    return;
+                }
+                context = systemUiContextReference.get();
+            }
+            PowerManager power = context == null ? null : context.getSystemService(PowerManager.class);
+            KeyguardManager keyguard = context == null ? null
+                    : context.getSystemService(KeyguardManager.class);
+            if (power == null || !power.isInteractive() || keyguard == null
+                    || !keyguard.isDeviceLocked()) {
+                log("Face result ignored after screen-off or keyguard exit");
+                return;
+            }
             int userId = resolveSelectedUserId(monitor);
             if (!SystemUiCompat.isWeakBiometricAllowed(monitor, userId)) {
                 showKeyguardFailure();
@@ -821,6 +848,7 @@ public final class XposedEntry implements IXposedHookLoadPackage {
         synchronized (LOCK) {
             passiveAuthenticatedAt = 0L;
             activeToken = null;
+            resultGuard.clear();
             configCheckInFlight = false;
             cameraHostActive = false;
             lastLaunchAt = 0L;

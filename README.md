@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel4xl-2DFaceUnlock)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-这是一个面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL 便利解锁模块。0.8.0 在 Android 10–16 的 AOSP SystemUI 运行时适配基础上，同时校验局部纹理与脸部几何比例，并保留眼位对齐、自动校准和 4/6 多帧确认。
+这是一个面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL 便利解锁模块。0.8.1 在 Android 10–16 的 AOSP SystemUI 运行时适配基础上，同时校验局部纹理与脸部几何比例，并保留眼位对齐、自动校准，补充有时限的多帧确认和会话结果防重放。
 
 > 本项目不是 Google、LineageOS、Magisk 或 LSPosed 的官方项目。普通 RGB 2D 人脸可能被照片或视频绕过，只适合便利解锁。
 
@@ -12,7 +12,7 @@
 
 - [下载最新版 APK](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
 - [完整中文安装说明](dist/Pixel_2D人脸解锁_安装使用说明.txt)
-- v0.8.0 本地 APK SHA-256：`45130C0C6DA5C889ECC9BF6FF166C6004911A3D13DA6952950DA192C012AD45D`
+- [下载 0.8.1 安装包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.8.1/Pixel2DFaceUnlock-coral-0.8.1-safety-speed.apk) · [发布说明](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.8.1) · [安全与速度验证报告](SAFETY-SPEED-REPORT.md)。
 
 ## 适配边界
 
@@ -58,6 +58,16 @@
 - 快速重锁回归中，第一轮成功后第二轮闭眼没有复用旧认证；Android 16 输入接收层仍为 `NOT_TOUCHABLE`。
 - 这些结果不等同于经过多人样本测得的误识率。普通 RGB 2D 图像仍可能被本人照片或视频重放绕过。
 
+## 0.8.1 安全与速度调整
+
+- 保留 v3 双信号模板和现有识别档位，无需重新录入。纹理和几何身份阈值没有放宽。
+- 用相机采集时间限制投票：最多 900 ms 的窗口，相邻帧间隔超过 350 ms 清空；重复或倒退的时间戳拒绝。闭眼、丢脸、多脸、关键点缺失或画质硬门槛失败会清空旧票。
+- 普通路径仍需 5 次以上观察、至少 4 帧匹配，最近 2 帧必须连续匹配。高置信路径仅允许纹理留有额外 0.05 余量、几何更接近、至少 44/49 局部与 24/25 核心区域通过、双眼概率至少 0.85 且画质/姿态无惩罚的连续 4 帧提前确认；两条路径均需至少 90 ms 的独立采集证据。
+- 普通睁眼概率门槛从 0.55 提至 0.70，并拒绝缺失、NaN、无穷大和越界概率。仍不要求眨眼或转头，这不是防照片活体检测。
+- 解锁结果 18 秒过期且只能消费一次；异步提交前重新检查唤醒代次、交互状态、锁定状态和系统强认证要求。
+- 配置和模板使用同一次读取，读改写受完整锁保护；校验模板数值，保存失败会明确返回失败。相机退出只解绑自己的用例，防止旧会话关掉新相机。
+- 本地安装产物使用不可调试的 Release 构建，默认关闭逐帧诊断，保留无网络权限和禁止备份的设置。详细实测及局限见 [验证报告](SAFETY-SPEED-REPORT.md)。
+
 ## 当前解锁逻辑
 
 日常解锁不会显示摄像头画面。动画注入原生 SystemUI 锁屏，可选择“面容光环”或“灵动岛”。
@@ -73,7 +83,7 @@
 2. 在 LSPosed 中启用本模块，作用域只选择“系统界面”。
 3. 重启手机或重启 SystemUI；重启后的第一次解锁先输入 PIN。
 4. 打开“Pixel 2D 人脸解锁”，确认“LSPosed 钩子已加载”，并查看下面的运行时适配报告。
-5. 从 0.7.x 或更早版本升级到 0.8.0 后，按提示重新录入一次以建立 v3 双信号模板；自然看向屏幕即可，不要求眨眼或转头。
+5. 从 0.7.x 或更早版本升级到 0.8.x 后，按提示重新录入一次以建立 v3 双信号模板；自然看向屏幕即可，不要求眨眼或转头。
 
 ## 安全说明
 
@@ -93,12 +103,12 @@
 需要 JDK 17 和 Android SDK 36：
 
 ```bash
-./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug --no-daemon
+./gradlew :app:testDebugUnitTest :app:assembleRelease :app:lintRelease --no-daemon
 ```
 
-Windows 也可以运行 `build.ps1`。调试产物位于 `app/build/outputs/apk/debug/app-debug.apk`。
+Windows 也可以运行 `build.ps1`。默认执行单元测试、Release 构建和 Lint，产物位于 `app/build/outputs/apk/release/app-release.apk`。真机存储回归可额外构建 `:app:assembleDebugAndroidTest`，其合成数据仅写入隔离的缓存目录。
 
-项目发布 APK 沿用现有 Android Debug 证书，以便覆盖升级先前测试版；证书 SHA-256 为 `769bae7364e73ad5c73835c7fbce30994ea4e9ff9efd32fde51404886d5ad7da`。自行编译的 APK 如果签名不同，不能直接覆盖安装。
+本地 Release APK 关闭调试标记，但沿用现有 Android Debug 签名证书，以便覆盖升级先前测试版；证书 SHA-256 为 `769bae7364e73ad5c73835c7fbce30994ea4e9ff9efd32fde51404886d5ad7da`。自行编译的 APK 如果签名不同，不能直接覆盖安装。
 
 ## 开源协议与第三方组件
 

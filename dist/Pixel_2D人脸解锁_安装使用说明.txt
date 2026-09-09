@@ -1,4 +1,4 @@
-Pixel 2D 人脸解锁 v0.8.0——安装与使用说明
+Pixel 2D 人脸解锁 v0.8.1——安装与使用说明
 ==================================================
 
 一、适用范围
@@ -47,8 +47,10 @@ Android 16 已在 Pixel 4 XL（coral）+ LineageOS 23.2 上完成真机验证；
 
 四、安装 Pixel 2D 人脸解锁 APK
 
+从 0.8.0 升级到 0.8.1 保留 v3 模板，无需重新录入。本版关闭调试入口，仍沿用原安装签名。
+
 安装文件：
-Pixel2DFaceUnlock-Pixel-Android10-16-v0.8.0.apk
+Pixel2DFaceUnlock-coral-0.8.1-safety-speed.apk
 
 1. 在手机文件管理器中找到上述 APK。
 2. 允许当前文件管理器“安装未知应用”。
@@ -140,7 +142,7 @@ Pixel2DFaceUnlock-Pixel-Android10-16-v0.8.0.apk
 处理：这是预期逻辑。普通锁屏识别通过后还需要向上滑动；只有已经进入 PIN/密码页面时才会直接解锁。
 
 问题 4：识别速度慢或经常失败。
-处理：先使用“均衡”，清洁前置摄像头并在日常光线下重新录入。新版允许 6 帧窗口内出现最多 2 个瞬时坏帧，但极暗、过曝或严重遮挡仍会拒绝。
+处理：先使用“均衡”，清洁前置摄像头并在日常光线下重新录入。普通匹配使用 6 帧短时窗口，最近两帧必须匹配；闭眼、丢脸或画质硬门槛失败会清空旧票。
 
 问题 5：更新 APK 后模块突然没有效果。
 处理：覆盖安装后重启 SystemUI 或完整重启手机，让 LSPosed 对新 APK 重新加载；不要先卸载旧版，否则人脸模板会被删除。
@@ -184,5 +186,5 @@ Pixel2DFaceUnlock-Pixel-Android10-16-v0.8.0.apk
 
 当前安装包校验
 
-文件名：Pixel2DFaceUnlock-Pixel-Android10-16-v0.8.0.apk
-SHA-256：45130C0C6DA5C889ECC9BF6FF166C6004911A3D13DA6952950DA192C012AD45D
+文件名：Pixel2DFaceUnlock-coral-0.8.1-safety-speed.apk
+SHA-256：5B52D0B1E76E510A5314089B2DCE698D245413957A5F4DA13421E8724FDEABE5

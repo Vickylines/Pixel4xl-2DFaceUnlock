@@ -1,3 +1,7 @@
+param(
+    [string[]]$Tasks = @(':app:testDebugUnitTest', ':app:assembleRelease', ':app:lintRelease')
+)
+
 $ErrorActionPreference = "Stop"
 
 $projectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -48,7 +52,7 @@ if ($bundledGradleBat -and (Test-Path -LiteralPath $bundledGradleBat)) {
 
 Push-Location $projectDir
 try {
-    & $gradleCommand :app:assembleDebug :app:lintDebug --no-daemon
+    & $gradleCommand @Tasks --no-daemon
     if ($LASTEXITCODE -ne 0) {
         throw "Gradle build failed with exit code $LASTEXITCODE."
     }

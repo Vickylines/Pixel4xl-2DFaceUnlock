@@ -1,5 +1,7 @@
 # 真机测试报告
 
+> 本文保留原 0.8.0 历史测试；2026-09-07 的 0.8.1 修改与实测请看 [安全与速度验证报告](SAFETY-SPEED-REPORT.md)。
+
 测试设备：Google Pixel 4 XL（coral），LineageOS 23.2-20260320-NIGHTLY，Android 16 / API 36。
 
 说明：0.8.0 已在本机完成构建、覆盖安装、SystemUI 注入及端到端锁屏回归；Android 10–15 仍属于源码适配，未逐版本真机验证。

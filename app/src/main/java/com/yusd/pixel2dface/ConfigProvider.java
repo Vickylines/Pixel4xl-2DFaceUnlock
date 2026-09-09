@@ -20,14 +20,11 @@ public final class ConfigProvider extends ContentProvider {
         Bundle result = new Bundle();
         if ("state".equals(method) && getContext() != null) {
             TemplateStore.recordHookHeartbeat(getContext());
-            boolean enabled = TemplateStore.isEnabled(getContext());
-            boolean enrolled = TemplateStore.isEnrolled(getContext());
-            long lockoutUntil = TemplateStore.getLockoutUntil(getContext());
-            int animationStyle = TemplateStore.getAnimationStyle(getContext());
-            result.putBoolean("enabled", enabled);
-            result.putBoolean("enrolled", enrolled);
-            result.putLong("lockout_until", lockoutUntil);
-            result.putInt("animation_style", animationStyle);
+            TemplateStore.StateSnapshot state = TemplateStore.readState(getContext());
+            result.putBoolean("enabled", state.enabled);
+            result.putBoolean("enrolled", state.enrolled);
+            result.putLong("lockout_until", state.lockoutUntil);
+            result.putInt("animation_style", state.animationStyle);
             return result;
         }
         if ("heartbeat".equals(method) && getContext() != null) {

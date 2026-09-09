@@ -10,6 +10,7 @@ import org.xmlpull.v1.XmlPullParser;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -26,6 +27,7 @@ public final class TemplateStore {
     private static final String LEGACY_PREFS_FILE = "face2d.xml";
     private static final Object IO_LOCK = new Object();
     private static final long UNLOCK_SESSION_VALID_MS = 15_000L;
+    private static long lastHeartbeatWrittenAt = -1L;
 
     private static final String KEY_ENABLED = "enabled";
     private static final String KEY_TEMPLATE_VERSION = "template_version";
@@ -59,9 +61,11 @@ public final class TemplateStore {
     }
 
     public static void setEnabled(Context context, boolean enabled) {
-        Properties properties = read(context);
-        properties.setProperty(KEY_ENABLED, Boolean.toString(enabled));
-        write(context, properties);
+        synchronized (IO_LOCK) {
+            Properties properties = read(context);
+            properties.setProperty(KEY_ENABLED, Boolean.toString(enabled));
+            write(context, properties);
+        }
     }
 
     public static boolean isEnrolled(Context context) {
@@ -77,12 +81,20 @@ public final class TemplateStore {
     }
 
     public static float getCalibratedThreshold(Context context) {
-        return clamp(getFloat(read(context), KEY_CALIBRATED_THRESHOLD, DEFAULT_THRESHOLD),
+        return getCalibratedThreshold(read(context));
+    }
+
+    private static float getCalibratedThreshold(Properties properties) {
+        return clamp(getFloat(properties, KEY_CALIBRATED_THRESHOLD, DEFAULT_THRESHOLD),
                 0.28f, 0.35f);
     }
 
     public static int getRecognitionProfile(Context context) {
-        int profile = getInt(read(context), KEY_RECOGNITION_PROFILE,
+        return getRecognitionProfile(read(context));
+    }
+
+    private static int getRecognitionProfile(Properties properties) {
+        int profile = getInt(properties, KEY_RECOGNITION_PROFILE,
                 RECOGNITION_PROFILE_BALANCED);
         if (profile == RECOGNITION_PROFILE_STRICT
                 || profile == RECOGNITION_PROFILE_COMFORT) {
@@ -92,17 +104,23 @@ public final class TemplateStore {
     }
 
     public static void setRecognitionProfile(Context context, int profile) {
-        int safeProfile = profile == RECOGNITION_PROFILE_STRICT
-                || profile == RECOGNITION_PROFILE_COMFORT
-                ? profile : RECOGNITION_PROFILE_BALANCED;
-        Properties properties = read(context);
-        properties.setProperty(KEY_RECOGNITION_PROFILE, Integer.toString(safeProfile));
-        write(context, properties);
+        synchronized (IO_LOCK) {
+            int safeProfile = profile == RECOGNITION_PROFILE_STRICT
+                    || profile == RECOGNITION_PROFILE_COMFORT
+                    ? profile : RECOGNITION_PROFILE_BALANCED;
+            Properties properties = read(context);
+            properties.setProperty(KEY_RECOGNITION_PROFILE, Integer.toString(safeProfile));
+            write(context, properties);
+        }
     }
 
     public static float getRecognitionThreshold(Context context) {
+        return getRecognitionThreshold(read(context));
+    }
+
+    private static float getRecognitionThreshold(Properties properties) {
         float profileCap;
-        switch (getRecognitionProfile(context)) {
+        switch (getRecognitionProfile(properties)) {
             case RECOGNITION_PROFILE_STRICT:
                 profileCap = 0.30f;
                 break;
@@ -113,48 +131,60 @@ public final class TemplateStore {
                 profileCap = 0.33f;
                 break;
         }
-        return Math.min(getCalibratedThreshold(context), profileCap);
+        return Math.min(getCalibratedThreshold(properties), profileCap);
     }
 
     public static int getAnimationStyle(Context context) {
-        int style = getInt(read(context), KEY_ANIMATION_STYLE, ANIMATION_STYLE_FACE_ID);
+        return getAnimationStyle(read(context));
+    }
+
+    private static int getAnimationStyle(Properties properties) {
+        int style = getInt(properties, KEY_ANIMATION_STYLE, ANIMATION_STYLE_FACE_ID);
         return style == ANIMATION_STYLE_DYNAMIC_ISLAND
                 ? ANIMATION_STYLE_DYNAMIC_ISLAND : ANIMATION_STYLE_FACE_ID;
     }
 
     public static void setAnimationStyle(Context context, int style) {
-        int safeStyle = style == ANIMATION_STYLE_DYNAMIC_ISLAND
-                ? ANIMATION_STYLE_DYNAMIC_ISLAND : ANIMATION_STYLE_FACE_ID;
-        Properties properties = read(context);
-        properties.setProperty(KEY_ANIMATION_STYLE, Integer.toString(safeStyle));
-        write(context, properties);
+        synchronized (IO_LOCK) {
+            int safeStyle = style == ANIMATION_STYLE_DYNAMIC_ISLAND
+                    ? ANIMATION_STYLE_DYNAMIC_ISLAND : ANIMATION_STYLE_FACE_ID;
+            Properties properties = read(context);
+            properties.setProperty(KEY_ANIMATION_STYLE, Integer.toString(safeStyle));
+            write(context, properties);
+        }
     }
 
-    public static void saveIdentityModel(Context context, IdentityModel model) {
-        Properties properties = read(context);
-        int oldCount = getInt(properties, KEY_TEMPLATE_COUNT, 0);
-        for (int i = 0; i < oldCount; i++) {
-            properties.remove(KEY_TEMPLATE_PREFIX + i);
+    public static boolean saveIdentityModel(Context context, IdentityModel model) {
+        synchronized (IO_LOCK) {
+            Properties properties = read(context);
+            int oldCount = getInt(properties, KEY_TEMPLATE_COUNT, 0);
+            for (int i = 0; i < oldCount; i++) {
+                properties.remove(KEY_TEMPLATE_PREFIX + i);
+            }
+            properties.setProperty(KEY_ENABLED, Boolean.TRUE.toString());
+            properties.setProperty(KEY_TEMPLATE_VERSION,
+                    Integer.toString(CURRENT_TEMPLATE_VERSION));
+            properties.setProperty(KEY_TEMPLATE_COUNT, "1");
+            properties.setProperty(KEY_CALIBRATED_THRESHOLD,
+                    Float.toString(clamp(model.textureThreshold, 0.28f, 0.35f)));
+            properties.setProperty(KEY_TEMPLATE_PREFIX + "0", encode(model.textureCentroid));
+            properties.setProperty(KEY_CELL_WEIGHTS, encode(model.cellWeights));
+            properties.setProperty(KEY_CELL_LIMITS, encode(model.cellLimits));
+            properties.setProperty(KEY_GEOMETRY_CENTROID, encode(model.geometryCentroid));
+            properties.setProperty(KEY_GEOMETRY_SCALES, encode(model.geometryScales));
+            properties.setProperty(KEY_GEOMETRY_THRESHOLD,
+                    Float.toString(clamp(model.geometryThreshold, 1.0f, 2.5f)));
+            return write(context, properties);
         }
-        properties.setProperty(KEY_ENABLED, Boolean.TRUE.toString());
-        properties.setProperty(KEY_TEMPLATE_VERSION,
-                Integer.toString(CURRENT_TEMPLATE_VERSION));
-        properties.setProperty(KEY_TEMPLATE_COUNT, "1");
-        properties.setProperty(KEY_CALIBRATED_THRESHOLD,
-                Float.toString(clamp(model.textureThreshold, 0.28f, 0.35f)));
-        properties.setProperty(KEY_TEMPLATE_PREFIX + "0", encode(model.textureCentroid));
-        properties.setProperty(KEY_CELL_WEIGHTS, encode(model.cellWeights));
-        properties.setProperty(KEY_CELL_LIMITS, encode(model.cellLimits));
-        properties.setProperty(KEY_GEOMETRY_CENTROID, encode(model.geometryCentroid));
-        properties.setProperty(KEY_GEOMETRY_SCALES, encode(model.geometryScales));
-        properties.setProperty(KEY_GEOMETRY_THRESHOLD,
-                Float.toString(clamp(model.geometryThreshold, 1.0f, 2.5f)));
-        write(context, properties);
     }
 
     public static IdentityModel loadIdentityModel(Context context) {
-        Properties properties = read(context);
-        if (getInt(properties, KEY_TEMPLATE_VERSION, 1) != CURRENT_TEMPLATE_VERSION) {
+        return loadIdentityModel(read(context));
+    }
+
+    private static IdentityModel loadIdentityModel(Properties properties) {
+        if (getInt(properties, KEY_TEMPLATE_VERSION, 1) != CURRENT_TEMPLATE_VERSION
+                || getInt(properties, KEY_TEMPLATE_COUNT, 0) != 1) {
             return null;
         }
         try {
@@ -163,10 +193,8 @@ public final class TemplateStore {
             float[] cellLimits = decodeRequired(properties, KEY_CELL_LIMITS);
             float[] geometryCentroid = decodeRequired(properties, KEY_GEOMETRY_CENTROID);
             float[] geometryScales = decodeRequired(properties, KEY_GEOMETRY_SCALES);
-            float textureThreshold = clamp(getFloat(properties, KEY_CALIBRATED_THRESHOLD,
-                    DEFAULT_THRESHOLD), 0.28f, 0.35f);
-            float geometryThreshold = clamp(getFloat(properties, KEY_GEOMETRY_THRESHOLD, 1.7f),
-                    1.0f, 2.5f);
+            float textureThreshold = getFloat(properties, KEY_CALIBRATED_THRESHOLD, Float.NaN);
+            float geometryThreshold = getFloat(properties, KEY_GEOMETRY_THRESHOLD, Float.NaN);
             return new IdentityModel(textureCentroid, cellWeights, cellLimits,
                     geometryCentroid, geometryScales, textureThreshold, geometryThreshold);
         } catch (RuntimeException error) {
@@ -176,23 +204,62 @@ public final class TemplateStore {
     }
 
     public static void clearTemplates(Context context) {
-        Properties properties = read(context);
-        int oldCount = getInt(properties, KEY_TEMPLATE_COUNT, 0);
-        for (int i = 0; i < oldCount; i++) {
-            properties.remove(KEY_TEMPLATE_PREFIX + i);
+        synchronized (IO_LOCK) {
+            Properties properties = read(context);
+            int oldCount = getInt(properties, KEY_TEMPLATE_COUNT, 0);
+            for (int i = 0; i < oldCount; i++) {
+                properties.remove(KEY_TEMPLATE_PREFIX + i);
+            }
+            properties.remove(KEY_TEMPLATE_COUNT);
+            properties.remove(KEY_TEMPLATE_VERSION);
+            properties.remove(KEY_CALIBRATED_THRESHOLD);
+            properties.remove(KEY_CELL_WEIGHTS);
+            properties.remove(KEY_CELL_LIMITS);
+            properties.remove(KEY_GEOMETRY_CENTROID);
+            properties.remove(KEY_GEOMETRY_SCALES);
+            properties.remove(KEY_GEOMETRY_THRESHOLD);
+            properties.remove(KEY_FAILURES);
+            properties.remove(KEY_LOCKOUT_UNTIL);
+            properties.setProperty(KEY_ENABLED, Boolean.FALSE.toString());
+            write(context, properties);
         }
-        properties.remove(KEY_TEMPLATE_COUNT);
-        properties.remove(KEY_TEMPLATE_VERSION);
-        properties.remove(KEY_CALIBRATED_THRESHOLD);
-        properties.remove(KEY_CELL_WEIGHTS);
-        properties.remove(KEY_CELL_LIMITS);
-        properties.remove(KEY_GEOMETRY_CENTROID);
-        properties.remove(KEY_GEOMETRY_SCALES);
-        properties.remove(KEY_GEOMETRY_THRESHOLD);
-        properties.remove(KEY_FAILURES);
-        properties.remove(KEY_LOCKOUT_UNTIL);
-        properties.setProperty(KEY_ENABLED, Boolean.FALSE.toString());
-        write(context, properties);
+    }
+
+    static StateSnapshot readState(Context context) {
+        return new StateSnapshot(read(context));
+    }
+
+    static RecognitionSettings loadRecognitionSettings(Context context) {
+        Properties properties = read(context);
+        return new RecognitionSettings(loadIdentityModel(properties),
+                getRecognitionThreshold(properties), new StateSnapshot(properties));
+    }
+
+    static final class StateSnapshot {
+        final boolean enabled;
+        final boolean enrolled;
+        final long lockoutUntil;
+        final int animationStyle;
+
+        StateSnapshot(Properties properties) {
+            enabled = getBoolean(properties, KEY_ENABLED, false);
+            enrolled = getInt(properties, KEY_TEMPLATE_VERSION, 1) == CURRENT_TEMPLATE_VERSION
+                    && getInt(properties, KEY_TEMPLATE_COUNT, 0) == 1;
+            lockoutUntil = getLong(properties, KEY_LOCKOUT_UNTIL, 0L);
+            animationStyle = getAnimationStyle(properties);
+        }
+    }
+
+    static final class RecognitionSettings {
+        final IdentityModel model;
+        final float threshold;
+        final StateSnapshot state;
+
+        RecognitionSettings(IdentityModel model, float threshold, StateSnapshot state) {
+            this.model = model;
+            this.threshold = threshold;
+            this.state = state;
+        }
     }
 
     public static long getLockoutUntil(Context context) {
@@ -200,27 +267,31 @@ public final class TemplateStore {
     }
 
     public static void recordSuccess(Context context) {
-        Properties properties = read(context);
-        if (getInt(properties, KEY_FAILURES, 0) == 0
-                && getLong(properties, KEY_LOCKOUT_UNTIL, 0L) == 0L) {
-            return;
+        synchronized (IO_LOCK) {
+            Properties properties = read(context);
+            if (getInt(properties, KEY_FAILURES, 0) == 0
+                    && getLong(properties, KEY_LOCKOUT_UNTIL, 0L) == 0L) {
+                return;
+            }
+            properties.setProperty(KEY_FAILURES, "0");
+            properties.setProperty(KEY_LOCKOUT_UNTIL, "0");
+            write(context, properties);
         }
-        properties.setProperty(KEY_FAILURES, "0");
-        properties.setProperty(KEY_LOCKOUT_UNTIL, "0");
-        write(context, properties);
     }
 
     public static void recordFailure(Context context) {
-        Properties properties = read(context);
-        int failures = getInt(properties, KEY_FAILURES, 0) + 1;
-        if (failures >= 5) {
-            properties.setProperty(KEY_FAILURES, "0");
-            properties.setProperty(KEY_LOCKOUT_UNTIL,
-                    Long.toString(System.currentTimeMillis() + 30_000L));
-        } else {
-            properties.setProperty(KEY_FAILURES, Integer.toString(failures));
+        synchronized (IO_LOCK) {
+            Properties properties = read(context);
+            int failures = getInt(properties, KEY_FAILURES, 0) + 1;
+            if (failures >= 5) {
+                properties.setProperty(KEY_FAILURES, "0");
+                properties.setProperty(KEY_LOCKOUT_UNTIL,
+                        Long.toString(System.currentTimeMillis() + 30_000L));
+            } else {
+                properties.setProperty(KEY_FAILURES, Integer.toString(failures));
+            }
+            write(context, properties);
         }
-        write(context, properties);
     }
 
     public static boolean recordHookHeartbeat(Context context) {
@@ -229,9 +300,17 @@ public final class TemplateStore {
 
     public static boolean recordHookHeartbeat(Context context, String compatibility) {
         synchronized (IO_LOCK) {
+            long now = android.os.SystemClock.elapsedRealtime();
+            if (compatibility == null && lastHeartbeatWrittenAt >= 0L
+                    && now - lastHeartbeatWrittenAt < 30_000L) {
+                return true;
+            }
             boolean heartbeatWritten = writeSmallTextLocked(
                     new File(context.getFilesDir(), HEARTBEAT_FILE),
                     Long.toString(System.currentTimeMillis()), "hook heartbeat");
+            if (heartbeatWritten) {
+                lastHeartbeatWrittenAt = now;
+            }
             if (compatibility != null && !compatibility.trim().isEmpty()) {
                 writeSmallTextLocked(new File(context.getFilesDir(), COMPATIBILITY_FILE),
                         compatibility.trim(), "compatibility report");
@@ -298,9 +377,7 @@ public final class TemplateStore {
         synchronized (IO_LOCK) {
             File file = new File(context.getFilesDir(), UNLOCK_SESSION_FILE);
             AtomicFile atomicFile = new AtomicFile(file);
-            if (!file.exists()) {
-                return false;
-            }
+            boolean discard = false;
             try (FileInputStream input = atomicFile.openRead()) {
                 byte[] value = new byte[512];
                 int length = input.read(value);
@@ -308,6 +385,7 @@ public final class TemplateStore {
                         ? new String(value, 0, length, StandardCharsets.UTF_8).split("\\n")
                         : new String[0];
                 if (parts.length != 3) {
+                    discard = true;
                     return false;
                 }
                 long wallAge = System.currentTimeMillis() - Long.parseLong(parts[1]);
@@ -316,14 +394,21 @@ public final class TemplateStore {
                 boolean sameToken = MessageDigest.isEqual(
                         token.getBytes(StandardCharsets.UTF_8),
                         parts[0].getBytes(StandardCharsets.UTF_8));
-                return sameToken && wallAge >= -2_000L && wallAge <= UNLOCK_SESSION_VALID_MS
+                boolean fresh = wallAge >= -2_000L && wallAge <= UNLOCK_SESSION_VALID_MS
                         && elapsedAge >= 0L && elapsedAge <= UNLOCK_SESSION_VALID_MS;
+                discard = sameToken || !fresh;
+                return sameToken && fresh;
+            } catch (FileNotFoundException missing) {
+                return false;
             } catch (Exception error) {
+                discard = true;
                 Log.w(TAG, "Unable to consume unlock session", error);
                 return false;
             } finally {
-                // A launch authorization is one-shot, whether validation succeeded or failed.
-                atomicFile.delete();
+                // A guessed token must not erase a still-valid SystemUI launch grant.
+                if (discard) {
+                    atomicFile.delete();
+                }
             }
         }
     }
@@ -331,24 +416,22 @@ public final class TemplateStore {
     private static Properties read(Context context) {
         synchronized (IO_LOCK) {
             File file = new File(context.getFilesDir(), STORE_FILE);
-            if (!file.exists()) {
+            Properties properties = new Properties();
+            // openRead also recovers AtomicFile's backup after an interrupted write.
+            try (FileInputStream input = new AtomicFile(file).openRead()) {
+                properties.load(input);
+                return properties;
+            } catch (FileNotFoundException missing) {
                 Properties migrated = migrateLegacy(context);
                 if (!migrated.isEmpty()) {
                     writeLocked(file, migrated);
                     Log.i(TAG, "Migrated legacy face templates to atomic storage");
-                    return migrated;
                 }
-            }
-            Properties properties = new Properties();
-            if (!file.exists()) {
-                return properties;
-            }
-            try (FileInputStream input = new AtomicFile(file).openRead()) {
-                properties.load(input);
+                return migrated;
             } catch (Exception error) {
                 Log.e(TAG, "Unable to read face template store", error);
+                return new Properties();
             }
-            return properties;
         }
     }
 
@@ -477,6 +560,9 @@ public final class TemplateStore {
 
     private static float[] decode(String encoded) {
         byte[] bytes = Base64.decode(encoded, Base64.NO_WRAP);
+        if (bytes.length == 0 || bytes.length % Float.BYTES != 0) {
+            throw new IllegalArgumentException("Invalid model field length");
+        }
         ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         float[] values = new float[bytes.length / Float.BYTES];
         for (int i = 0; i < values.length; i++) {

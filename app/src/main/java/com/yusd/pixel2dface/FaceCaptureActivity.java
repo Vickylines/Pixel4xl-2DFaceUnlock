@@ -56,6 +56,7 @@ public class FaceCaptureActivity extends ComponentActivity {
     private static final String TAG = "Pixel2DFace";
     private static final int REQUEST_CAMERA = 200;
     private static final long SESSION_TIMEOUT_MS = 12_000L;
+    private static final long MAX_ANALYSIS_AGE_MS = 750L;
     private static final int ENROLLMENT_SAMPLES = 10;
     private static final int REQUIRED_MATCHES = RecognitionStabilizer.REQUIRED_MATCHES;
     private static final float MAX_ABS_YAW_DEGREES = 28f;
@@ -101,14 +102,21 @@ public class FaceCaptureActivity extends ComponentActivity {
     private TextView instructionView;
     private TextView detailView;
     private ProcessCameraProvider cameraProvider;
+    private ImageAnalysis analysisUseCase;
+    private Preview previewUseCase;
     private FaceDetector detector;
     private String mode;
     private String sessionToken;
     private long sessionStartedAt;
+    private long captureCreatedAt;
+    private long engineReadyAt;
+    private long frameStartedAt;
+    private long frameCapturedAtMs;
     private long firstFrameAt;
     private long lastEnrollmentCaptureAt;
     private long lastDiagnosticAt;
     private int processedFrameCount;
+    private boolean confirmedFastPath;
     private float bestScore = Float.MAX_VALUE;
 
     private final List<float[]> enrollmentSamples = new ArrayList<>();
@@ -144,6 +152,7 @@ public class FaceCaptureActivity extends ComponentActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        captureCreatedAt = SystemClock.elapsedRealtime();
         mode = getIntent().getStringExtra(Constants.EXTRA_MODE);
         if (mode == null) {
             mode = Constants.MODE_TEST;
@@ -333,10 +342,17 @@ public class FaceCaptureActivity extends ComponentActivity {
         analyzerExecutor.execute(() -> {
             try {
                 if (!Constants.MODE_ENROLL.equals(mode)) {
-                    identityModel = TemplateStore.loadIdentityModel(this);
-                    recognitionThreshold = TemplateStore.getRecognitionThreshold(this);
+                    TemplateStore.RecognitionSettings settings =
+                            TemplateStore.loadRecognitionSettings(this);
+                    identityModel = settings.model;
+                    recognitionThreshold = settings.threshold;
                     if (identityModel == null) {
                         finishFailure(false, "尚未录入人脸");
+                        return;
+                    }
+                    if (Constants.MODE_UNLOCK.equals(mode) && (!settings.state.enabled
+                            || settings.state.lockoutUntil > System.currentTimeMillis())) {
+                        finishFailure(false, "人脸解锁已停用或暂时锁定");
                         return;
                     }
                 }
@@ -348,6 +364,7 @@ public class FaceCaptureActivity extends ComponentActivity {
                     }
                     detector = createdDetector;
                 }
+                engineReadyAt = SystemClock.elapsedRealtime();
                 mainHandler.post(() -> {
                     if (!finished.get() && !isFinishing() && !isDestroyed()) {
                         startCamera();
@@ -364,19 +381,24 @@ public class FaceCaptureActivity extends ComponentActivity {
         ListenableFuture<ProcessCameraProvider> future = ProcessCameraProvider.getInstance(this);
         future.addListener(() -> {
             try {
+                if (finished.get() || resourceReleaseRequested.get()
+                        || isFinishing() || isDestroyed()) {
+                    return;
+                }
                 cameraProvider = future.get();
                 ImageAnalysis analysis = new ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .setTargetResolution(new android.util.Size(480, 360))
                         .build();
+                analysisUseCase = analysis;
                 analysis.setAnalyzer(analyzerExecutor, this::analyzeFrame);
-                cameraProvider.unbindAll();
                 if (Constants.MODE_UNLOCK.equals(mode)) {
                     // Analysis-only binding keeps the front camera feed completely hidden.
                     cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA,
                             analysis);
                 } else {
                     Preview preview = new Preview.Builder().build();
+                    previewUseCase = preview;
                     preview.setSurfaceProvider(previewView.getSurfaceProvider());
                     cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA,
                             preview, analysis);
@@ -391,9 +413,12 @@ public class FaceCaptureActivity extends ComponentActivity {
     }
 
     private void analyzeFrame(ImageProxy image) {
-        if (finished.get() || !processing.compareAndSet(false, true)) {
-            image.close();
-            return;
+        synchronized (detectorLock) {
+            if (finished.get() || resourceReleaseRequested.get()
+                    || resourcesReleased.get() || !processing.compareAndSet(false, true)) {
+                image.close();
+                return;
+            }
         }
         android.media.Image mediaImage = image.getImage();
         if (mediaImage == null) {
@@ -409,13 +434,22 @@ public class FaceCaptureActivity extends ComponentActivity {
             return;
         }
         long now = SystemClock.elapsedRealtime();
+        frameStartedAt = now;
+        // Use sensor capture time for voting, so a delayed/repeated result cannot create
+        // extra temporal evidence. Never compare this clock's epoch with elapsedRealtime.
+        frameCapturedAtMs = image.getImageInfo().getTimestamp() / 1_000_000L;
         if (firstFrameAt == 0L) {
             firstFrameAt = now;
         }
         processedFrameCount++;
-        detector.process(inputImage)
+        try {
+            detector.process(inputImage)
                 .addOnSuccessListener(analyzerExecutor, faces -> {
                     try {
+                        if (SystemClock.elapsedRealtime() - frameStartedAt > MAX_ANALYSIS_AGE_MS) {
+                            resetFaceTracking();
+                            return;
+                        }
                         processFaces(image, rotation, faces);
                     } catch (Throwable error) {
                         android.util.Log.e(TAG, "Unable to analyze camera frame", error);
@@ -428,6 +462,11 @@ public class FaceCaptureActivity extends ComponentActivity {
                     updateDetail("人脸检测暂时不可用");
                 })
                 .addOnCompleteListener(analyzerExecutor, task -> completeFrame(image));
+        } catch (RuntimeException error) {
+            resetFaceTracking();
+            android.util.Log.w(TAG, "Face detector rejected camera frame", error);
+            completeFrame(image);
+        }
     }
 
     private void completeFrame(ImageProxy image) {
@@ -564,8 +603,11 @@ public class FaceCaptureActivity extends ComponentActivity {
         if (count >= ENROLLMENT_SAMPLES) {
             IdentityModel enrolled = IdentityModel.enroll(enrollmentSamples,
                     enrollmentGeometrySamples);
-            TemplateStore.saveIdentityModel(this, enrolled);
-            finishSuccess(enrolled.textureThreshold);
+            if (TemplateStore.saveIdentityModel(this, enrolled)) {
+                finishSuccess(enrolled.textureThreshold);
+            } else {
+                finishFailure(false, "保存人脸失败，请重试");
+            }
         }
     }
 
@@ -581,17 +623,26 @@ public class FaceCaptureActivity extends ComponentActivity {
         lastConsistentCoreCells = match.consistentCoreCells;
         bestScore = Math.min(bestScore, score);
         boolean matched = match.accepted;
+        boolean highConfidence = match.isHighConfidence(frameThreshold,
+                identityModel.geometryThreshold)
+                && PassiveEyeGate.areConfidentlyOpen(lastLeftEyeProbability,
+                        lastRightEyeProbability, lastLeftEyeContourRatio, lastRightEyeContourRatio)
+                && posePenalty() == 0f && qualityPenalty() == 0f && framingPenalty() == 0f;
         RecognitionStabilizer.Result result = recognitionStabilizer.add(
-                score, frameThreshold, recognitionThreshold, matched);
+                score, frameThreshold, recognitionThreshold, matched, highConfidence,
+                frameCapturedAtMs);
         consecutiveMatches = result.matches;
 
-        String state = matched
-                ? "正在确认 " + result.matches + "/" + REQUIRED_MATCHES
-                : "纹理或脸型未匹配，请自然正视屏幕";
-        updateDetail(String.format(Locale.CHINA, "%s · 匹配 %.3f / %.3f",
-                state, score, frameThreshold));
+        if (detailView != null) {
+            String state = matched
+                    ? "正在确认 " + result.matches + "/" + REQUIRED_MATCHES
+                    : "纹理或脸型未匹配，请自然正视屏幕";
+            updateDetail(String.format(Locale.CHINA, "%s · 匹配 %.3f / %.3f",
+                    state, score, frameThreshold));
+        }
         logDiagnostic(score, score, matched, "match");
         if (result.confirmed) {
+            confirmedFastPath = result.fastPath;
             finishSuccess(result.meanScore);
         }
     }
@@ -716,11 +767,9 @@ public class FaceCaptureActivity extends ComponentActivity {
     }
 
     private void rejectRecognitionFrame() {
-        if (Constants.MODE_ENROLL.equals(mode)) {
-            return;
-        }
-        RecognitionStabilizer.Result result = recognitionStabilizer.reject(recognitionThreshold);
-        consecutiveMatches = result.matches;
+        // A closed eye, missing/extra face, or invalid geometry/quality breaks continuity.
+        // Only ordinary texture mismatches may occupy a rejected slot in the short vote.
+        resetFaceTracking();
     }
 
     private void resetFaceTracking() {
@@ -731,6 +780,9 @@ public class FaceCaptureActivity extends ComponentActivity {
     }
 
     private void logDiagnostic(float score, float frontScore, boolean matched, String stage) {
+        if (!BuildConfig.DEBUG && !android.util.Log.isLoggable(TAG, android.util.Log.DEBUG)) {
+            return;
+        }
         long now = SystemClock.elapsedRealtime();
         if (now - lastDiagnosticAt < 400L && consecutiveMatches < REQUIRED_MATCHES) {
             return;
@@ -776,6 +828,9 @@ public class FaceCaptureActivity extends ComponentActivity {
                 + ", pose=" + lastYaw + "/" + lastPitch + "/" + lastRoll
                 + ", quality=" + lastBrightness + "/" + lastContrast + "/" + lastSharpness
                 + ", matches=" + consecutiveMatches + "/" + REQUIRED_MATCHES
+                + ", path=" + (confirmedFastPath ? "strong" : "normal")
+                + ", initMs=" + (engineReadyAt - captureCreatedAt)
+                + ", totalMs=" + (now - captureCreatedAt)
                 + ", sessionMs=" + (now - sessionStartedAt)
                 + ", cameraMs=" + (firstFrameAt == 0L ? -1L : now - firstFrameAt)
                 + ", processedFrames=" + processedFrameCount);
@@ -786,7 +841,17 @@ public class FaceCaptureActivity extends ComponentActivity {
     }
 
     private void deliverSuccess(float score) {
+        if (isFinishing() || isDestroyed()) {
+            return;
+        }
         if (Constants.MODE_UNLOCK.equals(mode)) {
+            android.os.PowerManager power = getSystemService(android.os.PowerManager.class);
+            KeyguardManager keyguard = getSystemService(KeyguardManager.class);
+            if (power == null || !power.isInteractive() || keyguard == null
+                    || !keyguard.isDeviceLocked()) {
+                finishHostWithoutTransition();
+                return;
+            }
             Intent result = new Intent(Constants.ACTION_UNLOCK_RESULT)
                     .setPackage(Constants.SYSTEM_UI_PACKAGE)
                     .putExtra(Constants.EXTRA_SESSION_TOKEN, sessionToken)
@@ -839,13 +904,24 @@ public class FaceCaptureActivity extends ComponentActivity {
 
     private void stopCamera() {
         mainHandler.removeCallbacksAndMessages(null);
-        if (cameraProvider != null) {
-            cameraProvider.unbindAll();
+        if (analysisUseCase != null) {
+            analysisUseCase.clearAnalyzer();
+            if (cameraProvider != null) {
+                cameraProvider.unbind(analysisUseCase);
+            }
+            analysisUseCase = null;
+        }
+        if (previewUseCase != null) {
+            if (cameraProvider != null) {
+                cameraProvider.unbind(previewUseCase);
+            }
+            previewUseCase = null;
         }
     }
 
     @Override
     protected void onDestroy() {
+        finished.set(true);
         resourceReleaseRequested.set(true);
         mainHandler.removeCallbacks(keyguardExitWatcher);
         if (screenOffReceiver != null) {
@@ -899,6 +975,8 @@ public class FaceCaptureActivity extends ComponentActivity {
     }
 
     private void finishHostWithoutTransition() {
+        finished.set(true);
+        resourceReleaseRequested.set(true);
         if (!isFinishing()) {
             finish();
             overridePendingTransition(0, 0);

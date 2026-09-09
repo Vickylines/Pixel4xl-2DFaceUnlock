@@ -25,24 +25,51 @@ final class IdentityModel {
     final float[] geometryScales;
     final float textureThreshold;
     final float geometryThreshold;
+    private final double weightSum;
 
     IdentityModel(float[] textureCentroid, float[] cellWeights, float[] cellLimits,
             float[] geometryCentroid, float[] geometryScales, float textureThreshold,
             float geometryThreshold) {
-        if (textureCentroid.length != LbpDescriptor.LENGTH
+        if (textureCentroid == null || cellWeights == null || cellLimits == null
+                || geometryCentroid == null || geometryScales == null
+                || textureCentroid.length != LbpDescriptor.LENGTH
                 || cellWeights.length != CELL_COUNT
                 || cellLimits.length != CELL_COUNT
                 || geometryCentroid.length != FaceGeometry.LENGTH
                 || geometryScales.length != FaceGeometry.LENGTH) {
             throw new IllegalArgumentException("Invalid identity model dimensions");
         }
-        this.textureCentroid = textureCentroid;
-        this.cellWeights = cellWeights;
-        this.cellLimits = cellLimits;
-        this.geometryCentroid = geometryCentroid;
-        this.geometryScales = geometryScales;
+        requireRange(textureCentroid, 0f, 1f);
+        requireRange(cellWeights, 0.60f, 1.80f);
+        requireRange(cellLimits, 0.34f, 0.82f);
+        requireRange(geometryCentroid, -2f, 2f);
+        requireRange(geometryScales, 0.00001f, 1f);
+        if (!Float.isFinite(textureThreshold) || textureThreshold < 0.28f
+                || textureThreshold > 0.35f || !Float.isFinite(geometryThreshold)
+                || geometryThreshold < 1f || geometryThreshold > 2.5f) {
+            throw new IllegalArgumentException("Invalid identity model thresholds");
+        }
+        for (int cell = 0; cell < CELL_COUNT; cell++) {
+            float mass = 0f;
+            for (int bin = 0; bin < BINS; bin++) {
+                mass += textureCentroid[cell * BINS + bin];
+            }
+            if (Math.abs(mass - 1f) > 0.02f) {
+                throw new IllegalArgumentException("Invalid texture histogram");
+            }
+        }
+        this.textureCentroid = textureCentroid.clone();
+        this.cellWeights = cellWeights.clone();
+        this.cellLimits = cellLimits.clone();
+        this.geometryCentroid = geometryCentroid.clone();
+        this.geometryScales = geometryScales.clone();
         this.textureThreshold = textureThreshold;
         this.geometryThreshold = geometryThreshold;
+        double sum = 0d;
+        for (float weight : this.cellWeights) {
+            sum += weight;
+        }
+        weightSum = sum;
     }
 
     static IdentityModel enroll(List<float[]> textures, List<float[]> geometries) {
@@ -104,15 +131,17 @@ final class IdentityModel {
 
     Match compare(float[] texture, float[] geometry, float activeTextureThreshold) {
         if (texture == null || texture.length != LbpDescriptor.LENGTH
-                || geometry == null || geometry.length != FaceGeometry.LENGTH) {
+                || geometry == null || geometry.length != FaceGeometry.LENGTH
+                || !Float.isFinite(activeTextureThreshold) || activeTextureThreshold <= 0f
+                || activeTextureThreshold > textureThreshold) {
             return Match.rejected();
         }
-        float[] distances = new float[CELL_COUNT];
+        double weightedSum = 0d;
         int consistentCells = 0;
         int consistentCoreCells = 0;
         for (int cell = 0; cell < CELL_COUNT; cell++) {
             float distance = cellDistance(texture, textureCentroid, cell);
-            distances[cell] = distance;
+            weightedSum += distance * cellWeights[cell];
             int row = cell / GRID;
             int column = cell % GRID;
             boolean core = row >= 1 && row <= 5 && column >= 1 && column <= 5;
@@ -124,7 +153,7 @@ final class IdentityModel {
                 }
             }
         }
-        float textureScore = weightedMean(distances, cellWeights);
+        float textureScore = (float) (weightedSum / weightSum);
         GeometryScore geometryScore = geometryScore(geometry, geometryCentroid, geometryScales);
         boolean accepted = textureScore <= activeTextureThreshold
                 && consistentCells >= MIN_CONSISTENT_CELLS
@@ -141,10 +170,21 @@ final class IdentityModel {
         for (int bin = 0; bin < BINS; bin++) {
             double a = first[offset + bin];
             double b = second[offset + bin];
+            if (!Double.isFinite(a) || a < 0d || a > 1d) {
+                return Float.MAX_VALUE;
+            }
             double delta = a - b;
             sum += (delta * delta) / (a + b + 1e-8d);
         }
         return (float) (0.5d * sum);
+    }
+
+    private static void requireRange(float[] values, float minimum, float maximum) {
+        for (float value : values) {
+            if (!Float.isFinite(value) || value < minimum || value > maximum) {
+                throw new IllegalArgumentException("Invalid identity model values");
+            }
+        }
     }
 
     private static float weightedMean(float[] values, float[] weights) {
@@ -219,6 +259,15 @@ final class IdentityModel {
         static Match rejected() {
             return new Match(Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE, 0, 0,
                     false);
+        }
+
+        boolean isHighConfidence(float activeThreshold, float geometryThreshold) {
+            // Extra margins are only for saving the fifth observation. Normal matching
+            // still requires all original texture, geometry, and regional checks.
+            return accepted && textureScore <= activeThreshold - 0.05f
+                    && geometryScore <= Math.min(0.75f, geometryThreshold * 0.55f)
+                    && geometryPeak <= 1.8f && consistentCells >= 44
+                    && consistentCoreCells >= 24;
         }
     }
 
