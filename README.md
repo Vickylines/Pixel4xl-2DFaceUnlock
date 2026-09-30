@@ -116,12 +116,3 @@ Windows 也可以运行 `build.ps1`。默认执行单元测试、Release 构建�
 
 欢迎阅读 [贡献指南](CONTRIBUTING.md)、[安全说明](SECURITY.md)、[兼容性矩阵](COMPATIBILITY.md) 和 [真机测试报告](TEST-REPORT.md)。
 
-## 支持我
-
-如果您觉得这个项目对您有帮助，您可以扫描以下二维码进行捐赠：
-
-<p align="left">
-  <img src="assets/donate-alipay.png" alt="支付宝收款二维码" width="260">
-  &nbsp;&nbsp;
-  <img src="assets/donate-wechat.png" alt="微信支付收款二维码" width="260">
-</p>
