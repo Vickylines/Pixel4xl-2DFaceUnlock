@@ -2,6 +2,7 @@ package com.yusd.pixel2dface;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertEquals;
 
 import org.junit.Test;
 
@@ -40,5 +41,29 @@ public final class PassiveEyeGateTest {
         }
         assertFalse(PassiveEyeGate.areBothEyesOpen(0.99f, 0.99f, Float.POSITIVE_INFINITY, 0.2f));
         assertFalse(PassiveEyeGate.areBothEyesOpen(0.99f, 0.99f, 0.2f, Float.NaN));
+        assertFalse(PassiveEyeGate.areBothEyesOpen(0.99f, 0.99f, 1.01f, 0.2f));
+    }
+
+    @Test public void unavailableClassificationIsDistinctFromAClosedEye() {
+        assertEquals(PassiveEyeGate.Problem.CLASSIFICATION_UNAVAILABLE,
+                PassiveEyeGate.problem(null, 0.99f, 0.2f, 0.2f));
+        assertEquals(PassiveEyeGate.Problem.CLASSIFICATION_UNAVAILABLE,
+                PassiveEyeGate.problem(0.99f, Float.NaN, 0.2f, 0.2f));
+    }
+
+    @Test public void lowProbabilityRetainsPriorityOverAnUnreliableContour() {
+        assertEquals(PassiveEyeGate.Problem.PROBABILITY_REJECTED,
+                PassiveEyeGate.problem(0.69f, 0.99f, 0f, 0f));
+        assertEquals(PassiveEyeGate.Problem.PROBABILITY_REJECTED,
+                PassiveEyeGate.problem(0.99f, 0.69f, 0.2f, 0.2f));
+    }
+
+    @Test public void goodClassificationStillRequiresBothValidContours() {
+        assertEquals(PassiveEyeGate.Problem.CONTOUR_UNRELIABLE,
+                PassiveEyeGate.problem(0.99f, 0.99f, 0.09f, 0.2f));
+        assertEquals(PassiveEyeGate.Problem.CONTOUR_UNRELIABLE,
+                PassiveEyeGate.problem(0.99f, 0.99f, 0.2f, Float.NaN));
+        assertEquals(PassiveEyeGate.Problem.NONE,
+                PassiveEyeGate.problem(0.70f, 0.70f, 0.10f, 0.10f));
     }
 }

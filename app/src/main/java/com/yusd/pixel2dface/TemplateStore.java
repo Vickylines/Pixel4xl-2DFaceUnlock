@@ -1,238 +1,205 @@
 package com.yusd.pixel2dface;
 
 import android.content.Context;
-import android.util.AtomicFile;
-import android.util.Base64;
+import android.content.Intent;
 import android.util.Log;
-import android.util.Xml;
 
-import org.xmlpull.v1.XmlPullParser;
-
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.Properties;
 
+/**
+ * App-facing storage facade. Biometric serialization, file transactions, security
+ * policy, legacy migration, and transient hook state each have a separate owner.
+ */
 public final class TemplateStore {
-    private static final String TAG = "Pixel2DFace";
-    private static final String STORE_FILE = "face2d.properties";
-    private static final String HEARTBEAT_FILE = "hook.heartbeat";
-    private static final String COMPATIBILITY_FILE = "hook.compatibility";
-    private static final String UNLOCK_SESSION_FILE = "unlock.session";
-    private static final String LEGACY_PREFS_FILE = "face2d.xml";
-    private static final Object IO_LOCK = new Object();
-    private static final long UNLOCK_SESSION_VALID_MS = 15_000L;
-    private static long lastHeartbeatWrittenAt = -1L;
-
-    private static final String KEY_ENABLED = "enabled";
-    private static final String KEY_TEMPLATE_VERSION = "template_version";
-    private static final String KEY_TEMPLATE_COUNT = "template_count";
-    private static final String KEY_TEMPLATE_PREFIX = "template_";
-    private static final String KEY_CALIBRATED_THRESHOLD = "calibrated_threshold";
-    private static final String KEY_CELL_WEIGHTS = "cell_weights";
-    private static final String KEY_CELL_LIMITS = "cell_limits";
-    private static final String KEY_GEOMETRY_CENTROID = "geometry_centroid";
-    private static final String KEY_GEOMETRY_SCALES = "geometry_scales";
-    private static final String KEY_GEOMETRY_THRESHOLD = "geometry_threshold";
-    private static final String KEY_RECOGNITION_PROFILE = "recognition_profile";
-    private static final String KEY_ANIMATION_STYLE = "animation_style";
-    private static final String KEY_FAILURES = "failures";
-    private static final String KEY_LOCKOUT_UNTIL = "lockout_until";
-    private static final String KEY_HOOK_HEARTBEAT = "hook_heartbeat";
-
-    public static final int CURRENT_TEMPLATE_VERSION = 3;
+    public static final int CURRENT_TEMPLATE_VERSION = IdentityModelCodec.VERSION;
     public static final float DEFAULT_THRESHOLD = 0.33f;
     public static final int RECOGNITION_PROFILE_STRICT = 0;
     public static final int RECOGNITION_PROFILE_BALANCED = 1;
     public static final int RECOGNITION_PROFILE_COMFORT = 2;
     public static final int ANIMATION_STYLE_FACE_ID = 0;
     public static final int ANIMATION_STYLE_DYNAMIC_ISLAND = 1;
+    private static final String REVISION = "store_revision";
 
-    private TemplateStore() {
-    }
+    private TemplateStore() { }
 
-    public static boolean isEnabled(Context context) {
-        return getBoolean(read(context), KEY_ENABLED, false);
-    }
-
-    public static void setEnabled(Context context, boolean enabled) {
-        synchronized (IO_LOCK) {
-            Properties properties = read(context);
-            properties.setProperty(KEY_ENABLED, Boolean.toString(enabled));
-            write(context, properties);
-        }
-    }
-
-    public static boolean isEnrolled(Context context) {
-        Properties properties = read(context);
-        return getInt(properties, KEY_TEMPLATE_VERSION, 1) == CURRENT_TEMPLATE_VERSION
-                && getInt(properties, KEY_TEMPLATE_COUNT, 0) > 0;
-    }
+    public static boolean isEnabled(Context context) { return readState(context).enabled; }
+    public static boolean isEnrolled(Context context) { return readState(context).enrolled; }
 
     public static boolean hasLegacyTemplates(Context context) {
-        Properties properties = read(context);
-        return getInt(properties, KEY_TEMPLATE_COUNT, 0) > 0
-                && getInt(properties, KEY_TEMPLATE_VERSION, 1) != CURRENT_TEMPLATE_VERSION;
+        return read(context, false, properties ->
+                StorePolicy.integer(properties, "template_count", 0) > 0
+                && StorePolicy.integer(properties, "template_version", 1)
+                != CURRENT_TEMPLATE_VERSION);
     }
 
     public static float getCalibratedThreshold(Context context) {
-        return getCalibratedThreshold(read(context));
-    }
-
-    private static float getCalibratedThreshold(Properties properties) {
-        return clamp(getFloat(properties, KEY_CALIBRATED_THRESHOLD, DEFAULT_THRESHOLD),
-                0.28f, 0.35f);
-    }
-
-    public static int getRecognitionProfile(Context context) {
-        return getRecognitionProfile(read(context));
-    }
-
-    private static int getRecognitionProfile(Properties properties) {
-        int profile = getInt(properties, KEY_RECOGNITION_PROFILE,
-                RECOGNITION_PROFILE_BALANCED);
-        if (profile == RECOGNITION_PROFILE_STRICT
-                || profile == RECOGNITION_PROFILE_COMFORT) {
-            return profile;
-        }
-        return RECOGNITION_PROFILE_BALANCED;
-    }
-
-    public static void setRecognitionProfile(Context context, int profile) {
-        synchronized (IO_LOCK) {
-            int safeProfile = profile == RECOGNITION_PROFILE_STRICT
-                    || profile == RECOGNITION_PROFILE_COMFORT
-                    ? profile : RECOGNITION_PROFILE_BALANCED;
-            Properties properties = read(context);
-            properties.setProperty(KEY_RECOGNITION_PROFILE, Integer.toString(safeProfile));
-            write(context, properties);
-        }
+        return read(context, DEFAULT_THRESHOLD, StorePolicy::calibratedThreshold);
     }
 
     public static float getRecognitionThreshold(Context context) {
-        return getRecognitionThreshold(read(context));
+        return read(context, DEFAULT_THRESHOLD, StorePolicy::recognitionThreshold);
     }
 
-    private static float getRecognitionThreshold(Properties properties) {
-        float profileCap;
-        switch (getRecognitionProfile(properties)) {
-            case RECOGNITION_PROFILE_STRICT:
-                profileCap = 0.30f;
-                break;
-            case RECOGNITION_PROFILE_COMFORT:
-                profileCap = 0.35f;
-                break;
-            default:
-                profileCap = 0.33f;
-                break;
-        }
-        return Math.min(getCalibratedThreshold(properties), profileCap);
+    public static int getRecognitionProfile(Context context) {
+        return read(context, RECOGNITION_PROFILE_BALANCED, StorePolicy::profile);
     }
 
     public static int getAnimationStyle(Context context) {
-        return getAnimationStyle(read(context));
+        return read(context, ANIMATION_STYLE_FACE_ID, StorePolicy::animation);
     }
 
-    private static int getAnimationStyle(Properties properties) {
-        int style = getInt(properties, KEY_ANIMATION_STYLE, ANIMATION_STYLE_FACE_ID);
-        return style == ANIMATION_STYLE_DYNAMIC_ISLAND
-                ? ANIMATION_STYLE_DYNAMIC_ISLAND : ANIMATION_STYLE_FACE_ID;
+    public static void setEnabled(Context context, boolean enabled) { trySetEnabled(context, enabled); }
+
+    public static boolean trySetEnabled(Context context, boolean enabled) {
+        return mutate(context, properties -> {
+            if (enabled && (IdentityModelCodec.decode(properties) == null
+                    || !StorePolicy.validFailureState(properties))) return false;
+            properties.setProperty("enabled", Boolean.toString(enabled));
+            return true;
+        }, true);
     }
 
-    public static void setAnimationStyle(Context context, int style) {
-        synchronized (IO_LOCK) {
-            int safeStyle = style == ANIMATION_STYLE_DYNAMIC_ISLAND
-                    ? ANIMATION_STYLE_DYNAMIC_ISLAND : ANIMATION_STYLE_FACE_ID;
-            Properties properties = read(context);
-            properties.setProperty(KEY_ANIMATION_STYLE, Integer.toString(safeStyle));
-            write(context, properties);
-        }
+    public static void setRecognitionProfile(Context context, int profile) {
+        trySetRecognitionProfile(context, profile);
+    }
+
+    public static boolean trySetRecognitionProfile(Context context, int profile) {
+        return mutate(context, properties -> {
+            properties.setProperty("recognition_profile",
+                    Integer.toString(StorePolicy.safeProfile(profile)));
+            return true;
+        }, true);
+    }
+
+    public static void setAnimationStyle(Context context, int style) { trySetAnimationStyle(context, style); }
+
+    public static boolean trySetAnimationStyle(Context context, int style) {
+        return mutate(context, properties -> {
+            properties.setProperty("animation_style", Integer.toString(StorePolicy.safeAnimation(style)));
+            return true;
+        }, true);
     }
 
     public static boolean saveIdentityModel(Context context, IdentityModel model) {
-        synchronized (IO_LOCK) {
-            Properties properties = read(context);
-            int oldCount = getInt(properties, KEY_TEMPLATE_COUNT, 0);
-            for (int i = 0; i < oldCount; i++) {
-                properties.remove(KEY_TEMPLATE_PREFIX + i);
-            }
-            properties.setProperty(KEY_ENABLED, Boolean.TRUE.toString());
-            properties.setProperty(KEY_TEMPLATE_VERSION,
-                    Integer.toString(CURRENT_TEMPLATE_VERSION));
-            properties.setProperty(KEY_TEMPLATE_COUNT, "1");
-            properties.setProperty(KEY_CALIBRATED_THRESHOLD,
-                    Float.toString(clamp(model.textureThreshold, 0.28f, 0.35f)));
-            properties.setProperty(KEY_TEMPLATE_PREFIX + "0", encode(model.textureCentroid));
-            properties.setProperty(KEY_CELL_WEIGHTS, encode(model.cellWeights));
-            properties.setProperty(KEY_CELL_LIMITS, encode(model.cellLimits));
-            properties.setProperty(KEY_GEOMETRY_CENTROID, encode(model.geometryCentroid));
-            properties.setProperty(KEY_GEOMETRY_SCALES, encode(model.geometryScales));
-            properties.setProperty(KEY_GEOMETRY_THRESHOLD,
-                    Float.toString(clamp(model.geometryThreshold, 1.0f, 2.5f)));
-            return write(context, properties);
-        }
+        boolean saved = AtomicStoreFiles.locked(context, false, directory -> {
+            Properties properties = AtomicStoreFiles.readProperties(context, directory);
+            if (!IdentityModelCodec.encodeInto(properties, model)) return false;
+            properties.setProperty("enabled", "true");
+            StorePolicy.resetFailures(properties);
+            // Explicit re-enrollment may repair invalid security metadata, preserving
+            // independent preferences. Ordinary settings edits cannot do this.
+            if (!validRevision(properties)) properties.remove(REVISION);
+            if (!bumpRevision(properties)) return false;
+            HookRuntimeStore.invalidate(directory);
+            AtomicStoreFiles.writeProperties(directory, properties);
+            return true;
+        });
+        if (saved) notifyConfigurationChanged(context);
+        return saved;
     }
 
     public static IdentityModel loadIdentityModel(Context context) {
-        return loadIdentityModel(read(context));
+        return read(context, null, IdentityModelCodec::decode);
     }
 
-    private static IdentityModel loadIdentityModel(Properties properties) {
-        if (getInt(properties, KEY_TEMPLATE_VERSION, 1) != CURRENT_TEMPLATE_VERSION
-                || getInt(properties, KEY_TEMPLATE_COUNT, 0) != 1) {
-            return null;
-        }
-        try {
-            float[] textureCentroid = decodeRequired(properties, KEY_TEMPLATE_PREFIX + "0");
-            float[] cellWeights = decodeRequired(properties, KEY_CELL_WEIGHTS);
-            float[] cellLimits = decodeRequired(properties, KEY_CELL_LIMITS);
-            float[] geometryCentroid = decodeRequired(properties, KEY_GEOMETRY_CENTROID);
-            float[] geometryScales = decodeRequired(properties, KEY_GEOMETRY_SCALES);
-            float textureThreshold = getFloat(properties, KEY_CALIBRATED_THRESHOLD, Float.NaN);
-            float geometryThreshold = getFloat(properties, KEY_GEOMETRY_THRESHOLD, Float.NaN);
-            return new IdentityModel(textureCentroid, cellWeights, cellLimits,
-                    geometryCentroid, geometryScales, textureThreshold, geometryThreshold);
-        } catch (RuntimeException error) {
-            Log.e(TAG, "Invalid identity model", error);
-            return null;
-        }
-    }
+    public static void clearTemplates(Context context) { tryClearTemplates(context); }
 
-    public static void clearTemplates(Context context) {
-        synchronized (IO_LOCK) {
-            Properties properties = read(context);
-            int oldCount = getInt(properties, KEY_TEMPLATE_COUNT, 0);
-            for (int i = 0; i < oldCount; i++) {
-                properties.remove(KEY_TEMPLATE_PREFIX + i);
-            }
-            properties.remove(KEY_TEMPLATE_COUNT);
-            properties.remove(KEY_TEMPLATE_VERSION);
-            properties.remove(KEY_CALIBRATED_THRESHOLD);
-            properties.remove(KEY_CELL_WEIGHTS);
-            properties.remove(KEY_CELL_LIMITS);
-            properties.remove(KEY_GEOMETRY_CENTROID);
-            properties.remove(KEY_GEOMETRY_SCALES);
-            properties.remove(KEY_GEOMETRY_THRESHOLD);
-            properties.remove(KEY_FAILURES);
-            properties.remove(KEY_LOCKOUT_UNTIL);
-            properties.setProperty(KEY_ENABLED, Boolean.FALSE.toString());
-            write(context, properties);
-        }
+    public static boolean tryClearTemplates(Context context) {
+        boolean cleared = AtomicStoreFiles.locked(context, false, directory -> {
+            Properties properties = AtomicStoreFiles.readProperties(context, directory);
+            IdentityModelCodec.clear(properties);
+            properties.remove("failures");
+            properties.remove("lockout_until");
+            properties.setProperty("enabled", "false");
+            if (!validRevision(properties)) properties.remove(REVISION);
+            if (!bumpRevision(properties)) return false;
+            // Legacy SharedPreferences can retain a second biometric copy after migration.
+            // Delete it before committing the canonical clear so a failed cleanup cannot
+            // report failure after a silent configuration change.
+            LegacyStoreMigration.delete(context);
+            HookRuntimeStore.invalidate(directory);
+            AtomicStoreFiles.writeProperties(directory, properties);
+            return true;
+        });
+        if (cleared) notifyConfigurationChanged(context);
+        return cleared;
     }
 
     static StateSnapshot readState(Context context) {
-        return new StateSnapshot(read(context));
+        return read(context, StateSnapshot.unavailable(), StateSnapshot::new);
     }
 
     static RecognitionSettings loadRecognitionSettings(Context context) {
-        Properties properties = read(context);
-        return new RecognitionSettings(loadIdentityModel(properties),
-                getRecognitionThreshold(properties), new StateSnapshot(properties));
+        RecognitionSettings fallback = new RecognitionSettings(null, DEFAULT_THRESHOLD,
+                StateSnapshot.unavailable(), "");
+        return read(context, fallback, TemplateStore::recognitionSettings);
+    }
+
+    /** Configuration and launch grant come from one read under the same cross-process lock. */
+    static UnlockPreparation prepareUnlockSession(Context context, String token) {
+        UnlockPreparation fallback = new UnlockPreparation(StateSnapshot.unavailable(), false);
+        if (!UnlockSessionPolicy.validToken(token)) return fallback;
+        return AtomicStoreFiles.locked(context, fallback, directory -> {
+            StateSnapshot state = new StateSnapshot(AtomicStoreFiles.readProperties(context, directory));
+            boolean authorized = state.enabled && state.lockoutUntil <= System.currentTimeMillis()
+                    && HookRuntimeStore.writeAuthorization(context, directory, token);
+            return new UnlockPreparation(state, authorized);
+        });
+    }
+
+    /** A settings snapshot is returned only after one-use consumption and current policy validation. */
+    static RecognitionSettings consumeAuthorizedRecognitionSettings(Context context, String token) {
+        if (!UnlockSessionPolicy.validToken(token)) return null;
+        return AtomicStoreFiles.locked(context, null, directory -> {
+            if (!HookRuntimeStore.consumeAuthorization(context, directory, token)) return null;
+            RecognitionSettings settings = recognitionSettings(AtomicStoreFiles.readProperties(context, directory));
+            return settings.state.enabled && settings.state.lockoutUntil <= System.currentTimeMillis()
+                    ? settings : null;
+        });
+    }
+
+    private static RecognitionSettings recognitionSettings(Properties properties) {
+        IdentityModel model = IdentityModelCodec.decode(properties);
+        return new RecognitionSettings(model, StorePolicy.recognitionThreshold(properties),
+                new StateSnapshot(properties, model), IdentityModelCodec.fingerprint(properties));
+    }
+
+    static final class UnlockPreparation {
+        final StateSnapshot state;
+        final boolean authorized;
+
+        UnlockPreparation(StateSnapshot state, boolean authorized) {
+            this.state = state;
+            this.authorized = authorized;
+        }
+    }
+
+    static boolean isRecognitionSettingsCurrent(Context context, RecognitionSettings settings) {
+        if (settings == null || settings.model == null || !settings.state.storageAvailable) return false;
+        return read(context, false, properties -> settingsCurrent(properties, settings));
+    }
+
+    static boolean validateAndRecordSuccess(Context context, RecognitionSettings settings) {
+        if (settings == null || settings.model == null || !settings.state.storageAvailable) return false;
+        return AtomicStoreFiles.locked(context, false, directory -> {
+            Properties properties = AtomicStoreFiles.readProperties(context, directory);
+            if (!settingsCurrent(properties, settings)) return false;
+            Properties original = new Properties();
+            original.putAll(properties);
+            StorePolicy.resetFailures(properties);
+            // Failure counters do not change the identity/configuration revision. SystemUI
+            // verifies that same revision once more before accepting the result broadcast.
+            if (!original.equals(properties)) AtomicStoreFiles.writeProperties(directory, properties);
+            return true;
+        });
+    }
+
+    private static boolean settingsCurrent(Properties properties, RecognitionSettings settings) {
+        StateSnapshot state = new StateSnapshot(properties);
+        return state.storageAvailable && state.enabled && state.enrolled
+                && state.lockoutUntil <= System.currentTimeMillis()
+                && state.revision == settings.state.revision
+                && IdentityModelCodec.fingerprint(properties).equals(settings.fingerprint);
     }
 
     static final class StateSnapshot {
@@ -240,342 +207,157 @@ public final class TemplateStore {
         final boolean enrolled;
         final long lockoutUntil;
         final int animationStyle;
+        final int recognitionProfile;
+        final boolean legacyTemplates;
+        final boolean storageAvailable;
+        final long revision;
 
-        StateSnapshot(Properties properties) {
-            enabled = getBoolean(properties, KEY_ENABLED, false);
-            enrolled = getInt(properties, KEY_TEMPLATE_VERSION, 1) == CURRENT_TEMPLATE_VERSION
-                    && getInt(properties, KEY_TEMPLATE_COUNT, 0) == 1;
-            lockoutUntil = getLong(properties, KEY_LOCKOUT_UNTIL, 0L);
-            animationStyle = getAnimationStyle(properties);
+        StateSnapshot(Properties properties) { this(properties, IdentityModelCodec.decode(properties)); }
+
+        private StateSnapshot(Properties properties, IdentityModel model) {
+            boolean claimsCurrentModel = StorePolicy.integer(properties, "template_version", 1)
+                    == CURRENT_TEMPLATE_VERSION
+                    && StorePolicy.integer(properties, "template_count", 0) != 0;
+            storageAvailable = StorePolicy.validFailureState(properties) && validRevision(properties)
+                    && (!claimsCurrentModel || model != null);
+            enrolled = model != null;
+            enabled = storageAvailable && enrolled && StorePolicy.enabled(properties);
+            lockoutUntil = storageAvailable ? StorePolicy.lockoutUntil(properties) : Long.MAX_VALUE;
+            animationStyle = StorePolicy.animation(properties);
+            recognitionProfile = StorePolicy.profile(properties);
+            legacyTemplates = StorePolicy.integer(properties, "template_count", 0) > 0
+                    && StorePolicy.integer(properties, "template_version", 1)
+                    != CURRENT_TEMPLATE_VERSION;
+            revision = StorePolicy.longValue(properties, REVISION, 0L);
         }
+
+        private StateSnapshot() {
+            enabled = false;
+            enrolled = false;
+            lockoutUntil = Long.MAX_VALUE;
+            animationStyle = ANIMATION_STYLE_FACE_ID;
+            recognitionProfile = RECOGNITION_PROFILE_BALANCED;
+            legacyTemplates = false;
+            storageAvailable = false;
+            revision = -1L;
+        }
+
+        static StateSnapshot unavailable() { return new StateSnapshot(); }
     }
 
     static final class RecognitionSettings {
         final IdentityModel model;
         final float threshold;
         final StateSnapshot state;
+        private final String fingerprint;
 
         RecognitionSettings(IdentityModel model, float threshold, StateSnapshot state) {
+            this(model, threshold, state, "");
+        }
+
+        private RecognitionSettings(IdentityModel model, float threshold, StateSnapshot state,
+                String fingerprint) {
             this.model = model;
             this.threshold = threshold;
             this.state = state;
+            this.fingerprint = fingerprint;
         }
     }
 
-    public static long getLockoutUntil(Context context) {
-        return getLong(read(context), KEY_LOCKOUT_UNTIL, 0L);
+    public static long getLockoutUntil(Context context) { return readState(context).lockoutUntil; }
+    public static void recordSuccess(Context context) { tryRecordSuccess(context); }
+    public static void recordFailure(Context context) { tryRecordFailure(context); }
+
+    public static boolean tryRecordSuccess(Context context) {
+        return AtomicStoreFiles.locked(context, false, directory -> {
+            Properties properties = AtomicStoreFiles.readProperties(context, directory);
+            if (!validRevision(properties) || !StorePolicy.validFailureState(properties)) return false;
+            Properties original = new Properties();
+            original.putAll(properties);
+            StorePolicy.resetFailures(properties);
+            if (!original.equals(properties)) AtomicStoreFiles.writeProperties(directory, properties);
+            return true;
+        });
     }
 
-    public static void recordSuccess(Context context) {
-        synchronized (IO_LOCK) {
-            Properties properties = read(context);
-            if (getInt(properties, KEY_FAILURES, 0) == 0
-                    && getLong(properties, KEY_LOCKOUT_UNTIL, 0L) == 0L) {
-                return;
-            }
-            properties.setProperty(KEY_FAILURES, "0");
-            properties.setProperty(KEY_LOCKOUT_UNTIL, "0");
-            write(context, properties);
-        }
+    public static boolean tryRecordFailure(Context context) {
+        return AtomicStoreFiles.locked(context, false, directory -> {
+            Properties properties = AtomicStoreFiles.readProperties(context, directory);
+            if (!validRevision(properties)) return false;
+            Properties original = new Properties();
+            original.putAll(properties);
+            long previousLockout = StorePolicy.lockoutUntil(properties);
+            if (!StorePolicy.recordFailure(properties, System.currentTimeMillis())) return false;
+            if (original.equals(properties)) return true;
+            if (StorePolicy.lockoutUntil(properties) != previousLockout
+                    && !bumpRevision(properties)) return false;
+            AtomicStoreFiles.writeProperties(directory, properties);
+            return true;
+        });
     }
 
-    public static void recordFailure(Context context) {
-        synchronized (IO_LOCK) {
-            Properties properties = read(context);
-            int failures = getInt(properties, KEY_FAILURES, 0) + 1;
-            if (failures >= 5) {
-                properties.setProperty(KEY_FAILURES, "0");
-                properties.setProperty(KEY_LOCKOUT_UNTIL,
-                        Long.toString(System.currentTimeMillis() + 30_000L));
-            } else {
-                properties.setProperty(KEY_FAILURES, Integer.toString(failures));
-            }
-            write(context, properties);
-        }
-    }
-
-    public static boolean recordHookHeartbeat(Context context) {
-        return recordHookHeartbeat(context, null);
-    }
-
+    public static boolean recordHookHeartbeat(Context context) { return HookRuntimeStore.heartbeat(context, null); }
     public static boolean recordHookHeartbeat(Context context, String compatibility) {
-        synchronized (IO_LOCK) {
-            long now = android.os.SystemClock.elapsedRealtime();
-            if (compatibility == null && lastHeartbeatWrittenAt >= 0L
-                    && now - lastHeartbeatWrittenAt < 30_000L) {
-                return true;
-            }
-            boolean heartbeatWritten = writeSmallTextLocked(
-                    new File(context.getFilesDir(), HEARTBEAT_FILE),
-                    Long.toString(System.currentTimeMillis()), "hook heartbeat");
-            if (heartbeatWritten) {
-                lastHeartbeatWrittenAt = now;
-            }
-            if (compatibility != null && !compatibility.trim().isEmpty()) {
-                writeSmallTextLocked(new File(context.getFilesDir(), COMPATIBILITY_FILE),
-                        compatibility.trim(), "compatibility report");
-            }
-            return heartbeatWritten;
-        }
+        return HookRuntimeStore.heartbeat(context, compatibility);
     }
-
-    public static long getHookHeartbeat(Context context) {
-        synchronized (IO_LOCK) {
-            File file = new File(context.getFilesDir(), HEARTBEAT_FILE);
-            if (file.exists()) {
-                try (FileInputStream input = new AtomicFile(file).openRead()) {
-                    byte[] value = new byte[32];
-                    int length = input.read(value);
-                    if (length > 0) {
-                        return Long.parseLong(new String(value, 0, length,
-                                StandardCharsets.UTF_8).trim());
-                    }
-                } catch (Exception error) {
-                    Log.w(TAG, "Unable to read hook heartbeat", error);
-                }
-            }
-        }
-        // Keep compatibility with early beta data where the heartbeat shared the
-        // much larger template properties file.
-        return getLong(read(context), KEY_HOOK_HEARTBEAT, 0L);
-    }
-
-    public static String getHookCompatibility(Context context) {
-        synchronized (IO_LOCK) {
-            File file = new File(context.getFilesDir(), COMPATIBILITY_FILE);
-            if (!file.exists()) {
-                return "";
-            }
-            try (FileInputStream input = new AtomicFile(file).openRead()) {
-                byte[] value = new byte[2048];
-                int length = input.read(value);
-                return length > 0 ? new String(value, 0, length,
-                        StandardCharsets.UTF_8).trim() : "";
-            } catch (Exception error) {
-                Log.w(TAG, "Unable to read compatibility report", error);
-                return "";
-            }
-        }
-    }
-
+    public static long getHookHeartbeat(Context context) { return HookRuntimeStore.heartbeat(context); }
+    public static String getHookCompatibility(Context context) { return HookRuntimeStore.compatibility(context); }
     public static boolean authorizeUnlockSession(Context context, String token) {
-        if (!isValidSessionToken(token)) {
-            return false;
-        }
-        String value = token + "\n" + System.currentTimeMillis() + "\n"
-                + android.os.SystemClock.elapsedRealtime();
-        synchronized (IO_LOCK) {
-            return writeSmallTextLocked(new File(context.getFilesDir(), UNLOCK_SESSION_FILE),
-                    value, "unlock session");
-        }
+        return HookRuntimeStore.authorize(context, token);
     }
-
     public static boolean consumeAuthorizedUnlockSession(Context context, String token) {
-        if (!isValidSessionToken(token)) {
-            return false;
-        }
-        synchronized (IO_LOCK) {
-            File file = new File(context.getFilesDir(), UNLOCK_SESSION_FILE);
-            AtomicFile atomicFile = new AtomicFile(file);
-            boolean discard = false;
-            try (FileInputStream input = atomicFile.openRead()) {
-                byte[] value = new byte[512];
-                int length = input.read(value);
-                String[] parts = length > 0
-                        ? new String(value, 0, length, StandardCharsets.UTF_8).split("\\n")
-                        : new String[0];
-                if (parts.length != 3) {
-                    discard = true;
-                    return false;
-                }
-                long wallAge = System.currentTimeMillis() - Long.parseLong(parts[1]);
-                long elapsedAge = android.os.SystemClock.elapsedRealtime()
-                        - Long.parseLong(parts[2]);
-                boolean sameToken = MessageDigest.isEqual(
-                        token.getBytes(StandardCharsets.UTF_8),
-                        parts[0].getBytes(StandardCharsets.UTF_8));
-                boolean fresh = wallAge >= -2_000L && wallAge <= UNLOCK_SESSION_VALID_MS
-                        && elapsedAge >= 0L && elapsedAge <= UNLOCK_SESSION_VALID_MS;
-                discard = sameToken || !fresh;
-                return sameToken && fresh;
-            } catch (FileNotFoundException missing) {
-                return false;
-            } catch (Exception error) {
-                discard = true;
-                Log.w(TAG, "Unable to consume unlock session", error);
-                return false;
-            } finally {
-                // A guessed token must not erase a still-valid SystemUI launch grant.
-                if (discard) {
-                    atomicFile.delete();
-                }
-            }
-        }
+        return HookRuntimeStore.consume(context, token);
     }
 
-    private static Properties read(Context context) {
-        synchronized (IO_LOCK) {
-            File file = new File(context.getFilesDir(), STORE_FILE);
-            Properties properties = new Properties();
-            // openRead also recovers AtomicFile's backup after an interrupted write.
-            try (FileInputStream input = new AtomicFile(file).openRead()) {
-                properties.load(input);
-                return properties;
-            } catch (FileNotFoundException missing) {
-                Properties migrated = migrateLegacy(context);
-                if (!migrated.isEmpty()) {
-                    writeLocked(file, migrated);
-                    Log.i(TAG, "Migrated legacy face templates to atomic storage");
-                }
-                return migrated;
-            } catch (Exception error) {
-                Log.e(TAG, "Unable to read face template store", error);
-                return new Properties();
-            }
-        }
+    static boolean validRevision(Properties properties) {
+        String value = properties.getProperty(REVISION);
+        if (value == null) return true;
+        try { return Long.parseLong(value) >= 0L; }
+        catch (NumberFormatException invalid) { return false; }
     }
 
-    private static boolean write(Context context, Properties properties) {
-        synchronized (IO_LOCK) {
-            return writeLocked(new File(context.getFilesDir(), STORE_FILE), properties);
-        }
+    private static boolean bumpRevision(Properties properties) {
+        if (!validRevision(properties)) return false;
+        long previous = StorePolicy.longValue(properties, REVISION, 0L);
+        if (previous == Long.MAX_VALUE) return false;
+        properties.setProperty(REVISION, Long.toString(previous + 1L));
+        return true;
     }
 
-    private static boolean writeLocked(File file, Properties properties) {
-        AtomicFile atomicFile = new AtomicFile(file);
-        FileOutputStream output = null;
+    private interface Reader<T> { T read(Properties properties); }
+    private interface Change { boolean apply(Properties properties); }
+    private enum Mutation { FAILED, UNCHANGED, COMMITTED }
+
+    private static <T> T read(Context context, T fallback, Reader<T> reader) {
+        return AtomicStoreFiles.locked(context, fallback,
+                directory -> reader.read(AtomicStoreFiles.readProperties(context, directory)));
+    }
+
+    private static boolean mutate(Context context, Change change, boolean revokeGrant) {
+        Mutation result = AtomicStoreFiles.locked(context, Mutation.FAILED, directory -> {
+            Properties properties = AtomicStoreFiles.readProperties(context, directory);
+            Properties original = new Properties();
+            original.putAll(properties);
+            if (!validRevision(properties) || !change.apply(properties)) return Mutation.FAILED;
+            if (original.equals(properties)) return Mutation.UNCHANGED;
+            if (!bumpRevision(properties)) return Mutation.FAILED;
+            if (revokeGrant) HookRuntimeStore.invalidate(directory);
+            AtomicStoreFiles.writeProperties(directory, properties);
+            return Mutation.COMMITTED;
+        });
+        if (result == Mutation.COMMITTED && revokeGrant) notifyConfigurationChanged(context);
+        return result != Mutation.FAILED;
+    }
+
+    private static void notifyConfigurationChanged(Context context) {
+        // This is a revocation signal only. It carries no token, features, or authorization.
+        // Dispatch after releasing the file lock so a receiver can safely read fresh state.
         try {
-            output = atomicFile.startWrite();
-            properties.store(output, "Pixel 2D Face Unlock");
-            atomicFile.finishWrite(output);
-            return true;
-        } catch (Exception error) {
-            if (output != null) {
-                atomicFile.failWrite(output);
-            }
-            Log.e(TAG, "Unable to write face template store", error);
-            return false;
+            context.sendBroadcast(new Intent(Constants.ACTION_CONFIGURATION_CHANGED)
+                    .setPackage(Constants.SYSTEM_UI_PACKAGE));
+        } catch (RuntimeException error) {
+            Log.w("Pixel2DFace", "Unable to publish configuration revocation ("
+                    + error.getClass().getSimpleName() + ")");
         }
-    }
-
-    private static boolean writeSmallTextLocked(File file, String value, String label) {
-        AtomicFile atomicFile = new AtomicFile(file);
-        FileOutputStream output = null;
-        try {
-            output = atomicFile.startWrite();
-            output.write(value.getBytes(StandardCharsets.UTF_8));
-            atomicFile.finishWrite(output);
-            return true;
-        } catch (Exception error) {
-            if (output != null) {
-                atomicFile.failWrite(output);
-            }
-            Log.e(TAG, "Unable to write " + label, error);
-            return false;
-        }
-    }
-
-    private static Properties migrateLegacy(Context context) {
-        Properties properties = new Properties();
-        File legacy = new File(new File(context.getApplicationInfo().dataDir,
-                "shared_prefs"), LEGACY_PREFS_FILE);
-        if (!legacy.exists()) {
-            return properties;
-        }
-        try (FileInputStream input = new FileInputStream(legacy)) {
-            XmlPullParser parser = Xml.newPullParser();
-            parser.setInput(input, "UTF-8");
-            int event;
-            while ((event = parser.next()) != XmlPullParser.END_DOCUMENT) {
-                if (event != XmlPullParser.START_TAG) {
-                    continue;
-                }
-                String tag = parser.getName();
-                String name = parser.getAttributeValue(null, "name");
-                if (name == null) {
-                    continue;
-                }
-                if ("string".equals(tag)) {
-                    properties.setProperty(name, parser.nextText());
-                } else if ("boolean".equals(tag) || "int".equals(tag)
-                        || "long".equals(tag) || "float".equals(tag)) {
-                    String value = parser.getAttributeValue(null, "value");
-                    if (value != null) {
-                        properties.setProperty(name, value);
-                    }
-                }
-            }
-        } catch (Exception error) {
-            Log.e(TAG, "Unable to migrate legacy face templates", error);
-            properties.clear();
-        }
-        return properties;
-    }
-
-    private static boolean getBoolean(Properties properties, String key, boolean fallback) {
-        return Boolean.parseBoolean(properties.getProperty(key, Boolean.toString(fallback)));
-    }
-
-    private static boolean isValidSessionToken(String token) {
-        return token != null && token.length() >= 32 && token.length() <= 160
-                && token.indexOf('\n') < 0 && token.indexOf('\r') < 0;
-    }
-
-    private static int getInt(Properties properties, String key, int fallback) {
-        try {
-            return Integer.parseInt(properties.getProperty(key));
-        } catch (Exception ignored) {
-            return fallback;
-        }
-    }
-
-    private static long getLong(Properties properties, String key, long fallback) {
-        try {
-            return Long.parseLong(properties.getProperty(key));
-        } catch (Exception ignored) {
-            return fallback;
-        }
-    }
-
-    private static float getFloat(Properties properties, String key, float fallback) {
-        try {
-            return Float.parseFloat(properties.getProperty(key));
-        } catch (Exception ignored) {
-            return fallback;
-        }
-    }
-
-    private static float clamp(float value, float minimum, float maximum) {
-        return Math.max(minimum, Math.min(maximum, value));
-    }
-
-    private static String encode(float[] values) {
-        ByteBuffer buffer = ByteBuffer.allocate(values.length * Float.BYTES)
-                .order(ByteOrder.LITTLE_ENDIAN);
-        for (float value : values) {
-            buffer.putFloat(value);
-        }
-        return Base64.encodeToString(buffer.array(), Base64.NO_WRAP);
-    }
-
-    private static float[] decode(String encoded) {
-        byte[] bytes = Base64.decode(encoded, Base64.NO_WRAP);
-        if (bytes.length == 0 || bytes.length % Float.BYTES != 0) {
-            throw new IllegalArgumentException("Invalid model field length");
-        }
-        ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
-        float[] values = new float[bytes.length / Float.BYTES];
-        for (int i = 0; i < values.length; i++) {
-            values[i] = buffer.getFloat();
-        }
-        return values;
-    }
-
-    private static float[] decodeRequired(Properties properties, String key) {
-        String encoded = properties.getProperty(key);
-        if (encoded == null || encoded.isEmpty()) {
-            throw new IllegalArgumentException("Missing model field: " + key);
-        }
-        return decode(encoded);
     }
 }

@@ -112,6 +112,48 @@ public final class IdentityModelTest {
         assertTrue(copy.compare(texture(4), geometry(0f), 0.28f).accepted);
     }
 
+    @Test public void serializationSnapshotMutationCannotChangeRuntimeIdentity() {
+        IdentityModel model = enrolledModel();
+        model.textureCentroid[4] = 0f;
+        model.textureCentroid[91] = 1f;
+        model.geometryCentroid[0] = 1.5f;
+        model.cellWeights[0] = Float.NaN;
+        model.cellLimits[0] = Float.NaN;
+        model.geometryScales[0] = Float.NaN;
+        assertTrue(model.compare(texture(4), geometry(0f), 0.28f).accepted);
+        assertFalse(model.compare(texture(91), geometry(0f), 0.28f).accepted);
+    }
+
+    @Test public void truncatedOrOverfullHistogramCannotMatchEvenWithCloseTexture() {
+        IdentityModel model = enrolledModel();
+        for (float mass : new float[]{0.8f, 0f, 1.03f}) {
+            float[] texture = texture(4);
+            texture[4] = mass > 1f ? 1f : mass;
+            if (mass > 1f) texture[5] = mass - 1f;
+            assertFalse(model.compare(texture, geometry(0f), 0.28f).accepted);
+        }
+    }
+
+    @Test public void enrollmentRejectsMalformedPairsWithAConsistentException() {
+        assertThrows(IllegalArgumentException.class, () -> IdentityModel.enroll(null, null));
+        List<float[]> textures = new ArrayList<>();
+        List<float[]> geometries = new ArrayList<>();
+        for (int i = 0; i < 6; i++) { textures.add(texture(4)); geometries.add(geometry(0f)); }
+        textures.set(3, null);
+        assertThrows(IllegalArgumentException.class, () -> IdentityModel.enroll(textures, geometries));
+        textures.set(3, texture(4));
+        geometries.set(3, new float[]{Float.NaN});
+        assertThrows(IllegalArgumentException.class, () -> IdentityModel.enroll(textures, geometries));
+    }
+
+    @Test public void malformedStrongMatchCannotPassWithNonFiniteMargins() {
+        IdentityModel.Match match = new IdentityModel.Match(0.20f, 0.40f, 1f, 44, 24, true);
+        assertFalse(match.isHighConfidence(Float.POSITIVE_INFINITY, 1.35f));
+        assertFalse(match.isHighConfidence(0.28f, Float.POSITIVE_INFINITY));
+        assertFalse(new IdentityModel.Match(-1f, 0.40f, 1f, 44, 24, true)
+                .isHighConfidence(0.28f, 1.35f));
+    }
+
     private static float[] texture(int bin) {
         float[] descriptor = new float[LbpDescriptor.LENGTH];
         for (int cell = 0; cell < IdentityModel.CELL_COUNT; cell++) {

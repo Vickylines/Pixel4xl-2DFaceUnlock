@@ -31,6 +31,7 @@ public final class LbpDescriptor {
         private final int[] equalizationMap = new int[256];
         private final int[] cellCounts = new int[GRID * GRID];
         private final float[] descriptor = new float[LENGTH];
+        private final LumaPlane lumaPlane = new LumaPlane();
         private float brightness;
         private float contrast;
         private float sharpness;
@@ -46,13 +47,17 @@ public final class LbpDescriptor {
          */
         public float[] compute(ImageProxy image, int rotationDegrees, Rect uprightCrop,
                 PointF firstEye, PointF secondEye) {
+            // A failed extraction must not expose the preceding frame's image statistics.
+            brightness = contrast = sharpness = Float.NaN;
+            if (image == null || uprightCrop == null) {
+                throw new IllegalArgumentException("Missing camera frame or crop");
+            }
             ImageProxy.PlaneProxy[] planes = image.getPlanes();
-            if (planes.length == 0) {
+            if (planes == null || planes.length == 0 || planes[0] == null) {
                 throw new IllegalArgumentException("Y plane is unavailable");
             }
             ImageProxy.PlaneProxy yPlane = planes[0];
             ByteBuffer buffer = yPlane.getBuffer();
-            int baseOffset = buffer.position();
             int rowStride = yPlane.getRowStride();
             int pixelStride = yPlane.getPixelStride();
             int rawWidth = image.getWidth();
@@ -71,110 +76,114 @@ public final class LbpDescriptor {
             }
 
             Alignment alignment = Alignment.create(firstEye, secondEye, crop);
-
-            long sum = 0L;
-            long squareSum = 0L;
-            for (int y = 0; y < SIZE; y++) {
-                int row = y * SIZE;
-                for (int x = 0; x < SIZE; x++) {
-                    float uprightX;
-                    float uprightY;
-                    if (alignment != null) {
-                        float normalizedX = (x + 0.5f) / SIZE - 0.5f;
-                        float normalizedY = (y + 0.5f) / SIZE - 0.38f;
-                        uprightX = alignment.centerX
-                                + alignment.axisX * normalizedX * alignment.faceScale
-                                - alignment.axisY * normalizedY * alignment.faceScale;
-                        uprightY = alignment.centerY
-                                + alignment.axisY * normalizedX * alignment.faceScale
-                                + alignment.axisX * normalizedY * alignment.faceScale;
-                    } else {
-                        uprightX = crop.left + (x + 0.5f) * crop.width() / SIZE;
-                        uprightY = crop.top + (y + 0.5f) * crop.height() / SIZE;
-                    }
-                    float rawX;
-                    float rawY;
-                    if (rotation == 90) {
-                        rawX = uprightY;
-                        rawY = rawHeight - 1f - uprightX;
-                    } else if (rotation == 180) {
-                        rawX = rawWidth - 1f - uprightX;
-                        rawY = rawHeight - 1f - uprightY;
-                    } else if (rotation == 270) {
-                        rawX = rawWidth - 1f - uprightY;
-                        rawY = uprightX;
-                    } else {
-                        rawX = uprightX;
-                        rawY = uprightY;
-                    }
-                    int value = sampleBilinear(buffer, baseOffset, rowStride, pixelStride,
-                            rawWidth, rawHeight, rawX, rawY);
-                    gray[row + x] = value;
-                    sum += value;
-                    squareSum += (long) value * value;
-                }
-            }
-
-            int pixelCount = gray.length;
-            brightness = sum / (float) pixelCount;
-            double variance = squareSum / (double) pixelCount
-                    - (double) brightness * brightness;
-            contrast = (float) Math.sqrt(Math.max(0d, variance));
-            long gradient = 0L;
-            int gradientCount = 0;
-            for (int y = 0; y < SIZE; y++) {
-                int row = y * SIZE;
-                for (int x = 0; x < SIZE; x++) {
-                    int value = gray[row + x];
-                    if (x + 1 < SIZE) {
-                        gradient += Math.abs(value - gray[row + x + 1]);
-                        gradientCount++;
-                    }
-                    if (y + 1 < SIZE) {
-                        gradient += Math.abs(value - gray[row + SIZE + x]);
-                        gradientCount++;
+            lumaPlane.bind(buffer, rawWidth, rawHeight, rowStride, pixelStride);
+            try {
+                long sum = 0L;
+                long squareSum = 0L;
+                for (int y = 0; y < SIZE; y++) {
+                    int row = y * SIZE;
+                    for (int x = 0; x < SIZE; x++) {
+                        float uprightX;
+                        float uprightY;
+                        if (alignment != null) {
+                            float normalizedX = (x + 0.5f) / SIZE - 0.5f;
+                            float normalizedY = (y + 0.5f) / SIZE - 0.38f;
+                            uprightX = alignment.centerX
+                                    + alignment.axisX * normalizedX * alignment.faceScale
+                                    - alignment.axisY * normalizedY * alignment.faceScale;
+                            uprightY = alignment.centerY
+                                    + alignment.axisY * normalizedX * alignment.faceScale
+                                    + alignment.axisX * normalizedY * alignment.faceScale;
+                        } else {
+                            uprightX = crop.left + (x + 0.5f) * crop.width() / SIZE;
+                            uprightY = crop.top + (y + 0.5f) * crop.height() / SIZE;
+                        }
+                        float rawX;
+                        float rawY;
+                        if (rotation == 90) {
+                            rawX = uprightY;
+                            rawY = rawHeight - 1f - uprightX;
+                        } else if (rotation == 180) {
+                            rawX = rawWidth - 1f - uprightX;
+                            rawY = rawHeight - 1f - uprightY;
+                        } else if (rotation == 270) {
+                            rawX = rawWidth - 1f - uprightY;
+                            rawY = uprightX;
+                        } else {
+                            rawX = uprightX;
+                            rawY = uprightY;
+                        }
+                        int value = lumaPlane.sample(rawX, rawY);
+                        gray[row + x] = value;
+                        sum += value;
+                        squareSum += (long) value * value;
                     }
                 }
-            }
-            sharpness = gradient / (float) Math.max(1, gradientCount);
 
-            Arrays.fill(histogram, 0);
-            for (int value : gray) {
-                histogram[value]++;
-            }
-            equalize(gray, histogram, equalizationMap);
-
-            Arrays.fill(descriptor, 0f);
-            Arrays.fill(cellCounts, 0);
-            for (int y = 1; y < SIZE - 1; y++) {
-                for (int x = 1; x < SIZE - 1; x++) {
-                    int center = gray[y * SIZE + x];
-                    int code = 0;
-                    code |= bit(gray[(y - 1) * SIZE + (x - 1)], center, 7);
-                    code |= bit(gray[(y - 1) * SIZE + x], center, 6);
-                    code |= bit(gray[(y - 1) * SIZE + (x + 1)], center, 5);
-                    code |= bit(gray[y * SIZE + (x + 1)], center, 4);
-                    code |= bit(gray[(y + 1) * SIZE + (x + 1)], center, 3);
-                    code |= bit(gray[(y + 1) * SIZE + x], center, 2);
-                    code |= bit(gray[(y + 1) * SIZE + (x - 1)], center, 1);
-                    code |= bit(gray[y * SIZE + (x - 1)], center, 0);
-
-                    int cellX = Math.min(GRID - 1, x * GRID / SIZE);
-                    int cellY = Math.min(GRID - 1, y * GRID / SIZE);
-                    int cell = cellY * GRID + cellX;
-                    descriptor[cell * BINS + code] += 1f;
-                    cellCounts[cell]++;
+                int pixelCount = gray.length;
+                brightness = sum / (float) pixelCount;
+                double variance = squareSum / (double) pixelCount
+                        - (double) brightness * brightness;
+                contrast = (float) Math.sqrt(Math.max(0d, variance));
+                long gradient = 0L;
+                int gradientCount = 0;
+                for (int y = 0; y < SIZE; y++) {
+                    int row = y * SIZE;
+                    for (int x = 0; x < SIZE; x++) {
+                        int value = gray[row + x];
+                        if (x + 1 < SIZE) {
+                            gradient += Math.abs(value - gray[row + x + 1]);
+                            gradientCount++;
+                        }
+                        if (y + 1 < SIZE) {
+                            gradient += Math.abs(value - gray[row + SIZE + x]);
+                            gradientCount++;
+                        }
+                    }
                 }
-            }
+                sharpness = gradient / (float) Math.max(1, gradientCount);
 
-            for (int cell = 0; cell < cellCounts.length; cell++) {
-                float divisor = Math.max(1, cellCounts[cell]);
-                int offset = cell * BINS;
-                for (int bin = 0; bin < BINS; bin++) {
-                    descriptor[offset + bin] /= divisor;
+                Arrays.fill(histogram, 0);
+                for (int value : gray) {
+                    histogram[value]++;
                 }
+                equalize(gray, histogram, equalizationMap);
+
+                Arrays.fill(descriptor, 0f);
+                Arrays.fill(cellCounts, 0);
+                for (int y = 1; y < SIZE - 1; y++) {
+                    for (int x = 1; x < SIZE - 1; x++) {
+                        int center = gray[y * SIZE + x];
+                        int code = 0;
+                        code |= bit(gray[(y - 1) * SIZE + (x - 1)], center, 7);
+                        code |= bit(gray[(y - 1) * SIZE + x], center, 6);
+                        code |= bit(gray[(y - 1) * SIZE + (x + 1)], center, 5);
+                        code |= bit(gray[y * SIZE + (x + 1)], center, 4);
+                        code |= bit(gray[(y + 1) * SIZE + (x + 1)], center, 3);
+                        code |= bit(gray[(y + 1) * SIZE + x], center, 2);
+                        code |= bit(gray[(y + 1) * SIZE + (x - 1)], center, 1);
+                        code |= bit(gray[y * SIZE + (x - 1)], center, 0);
+
+                        int cellX = Math.min(GRID - 1, x * GRID / SIZE);
+                        int cellY = Math.min(GRID - 1, y * GRID / SIZE);
+                        int cell = cellY * GRID + cellX;
+                        descriptor[cell * BINS + code] += 1f;
+                        cellCounts[cell]++;
+                    }
+                }
+
+                for (int cell = 0; cell < cellCounts.length; cell++) {
+                    float divisor = Math.max(1, cellCounts[cell]);
+                    int offset = cell * BINS;
+                    for (int bin = 0; bin < BINS; bin++) {
+                        descriptor[offset + bin] /= divisor;
+                    }
+                }
+                return descriptor;
+            } finally {
+                // Workspace lives longer than a CameraX frame; never retain the plane buffer.
+                lumaPlane.unbind();
             }
-            return descriptor;
         }
 
         public float getBrightness() {
@@ -206,7 +215,9 @@ public final class LbpDescriptor {
         }
 
         static Alignment create(PointF first, PointF second, Rect faceBox) {
-            if (first == null || second == null) {
+            if (first == null || second == null || !Float.isFinite(first.x)
+                    || !Float.isFinite(first.y) || !Float.isFinite(second.x)
+                    || !Float.isFinite(second.y)) {
                 return null;
             }
             PointF left = first.x <= second.x ? first : second;
@@ -214,7 +225,7 @@ public final class LbpDescriptor {
             float dx = right.x - left.x;
             float dy = right.y - left.y;
             float distance = (float) Math.hypot(dx, dy);
-            if (distance < Math.max(18f, faceBox.width() * 0.20f)
+            if (!Float.isFinite(distance) || distance < Math.max(18f, faceBox.width() * 0.20f)
                     || distance > faceBox.width() * 0.78f) {
                 return null;
             }
@@ -226,11 +237,18 @@ public final class LbpDescriptor {
 
     public static float[] mean(List<float[]> descriptors) {
         float[] result = new float[LENGTH];
-        if (descriptors.isEmpty()) {
-            return result;
+        if (descriptors == null || descriptors.isEmpty()) {
+            throw new IllegalArgumentException("Missing enrollment descriptors");
         }
         for (float[] descriptor : descriptors) {
+            if (descriptor == null || descriptor.length != LENGTH) {
+                throw new IllegalArgumentException("Invalid enrollment descriptor dimensions");
+            }
             for (int i = 0; i < result.length; i++) {
+                if (!Float.isFinite(descriptor[i]) || descriptor[i] < 0f
+                        || descriptor[i] > 1f) {
+                    throw new IllegalArgumentException("Invalid enrollment descriptor values");
+                }
                 result[i] += descriptor[i];
             }
         }
@@ -241,31 +259,13 @@ public final class LbpDescriptor {
         return result;
     }
 
-    private static int sampleBilinear(ByteBuffer buffer, int baseOffset, int rowStride,
-            int pixelStride, int width, int height, float x, float y) {
-        float safeX = Math.max(0f, Math.min(width - 1f, x));
-        float safeY = Math.max(0f, Math.min(height - 1f, y));
-        int x0 = (int) safeX;
-        int y0 = (int) safeY;
-        int x1 = Math.min(width - 1, x0 + 1);
-        int y1 = Math.min(height - 1, y0 + 1);
-        float fx = safeX - x0;
-        float fy = safeY - y0;
-        int p00 = buffer.get(baseOffset + y0 * rowStride + x0 * pixelStride) & 0xff;
-        int p10 = buffer.get(baseOffset + y0 * rowStride + x1 * pixelStride) & 0xff;
-        int p01 = buffer.get(baseOffset + y1 * rowStride + x0 * pixelStride) & 0xff;
-        int p11 = buffer.get(baseOffset + y1 * rowStride + x1 * pixelStride) & 0xff;
-        float top = p00 + (p10 - p00) * fx;
-        float bottom = p01 + (p11 - p01) * fx;
-        return Math.max(0, Math.min(255, Math.round(top + (bottom - top) * fy)));
-    }
-
     private static int normalizeRotation(int rotation) {
         int normalized = ((rotation % 360) + 360) % 360;
         if (normalized == 90 || normalized == 180 || normalized == 270) {
             return normalized;
         }
-        return 0;
+        if (normalized == 0) return 0;
+        throw new IllegalArgumentException("Unsupported camera rotation");
     }
 
     private static int bit(int neighbor, int center, int shift) {

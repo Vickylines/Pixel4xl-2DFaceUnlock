@@ -26,11 +26,21 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build and lint
-        run: ./gradlew :app:testDebugUnitTest :app:assembleRelease :app:lintRelease --no-daemon
+        run: ./gradlew :app:testDebugUnitTest :app:assembleRelease :app:lintRelease :app:assembleDebugAndroidTest --no-daemon
 
-      - name: Upload CI APK (local signing certificate)
+      - name: Upload CI APK (CI certificate, use GitHub Release for upgrades)
         uses: actions/upload-artifact@v4
         with:
           name: Pixel2DFaceUnlock-ci-release
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
+
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pixel2DFaceUnlock-validation
+          path: |
+            app/build/test-results/testDebugUnitTest/*.xml
+            app/build/reports/lint-results-release.*
+          if-no-files-found: warn

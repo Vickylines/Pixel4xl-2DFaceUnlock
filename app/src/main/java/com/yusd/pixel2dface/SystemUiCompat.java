@@ -3,13 +3,17 @@ package com.yusd.pixel2dface;
 import android.app.ActivityManager;
 import android.app.admin.DevicePolicyManager;
 import android.content.Context;
+import android.content.ComponentName;
 import android.os.Build;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Array;
+import java.lang.ref.WeakReference;
 import java.util.Locale;
+import java.util.List;
 
 import de.robv.android.xposed.XposedHelpers;
 
@@ -33,6 +37,9 @@ final class SystemUiCompat {
     private static volatile String activeAuthenticationField;
     private static volatile int activeAuthenticationUserId = INVALID_USER_ID;
     private static volatile String activeAuthenticationAdapter = "尚未运行验证";
+    private static WeakReference<Object> activeAuthenticationMonitor = new WeakReference<>(null);
+    private static WeakReference<Object> activeAuthenticationState = new WeakReference<>(null);
+    private static Object activeAuthenticationValue;
 
     private SystemUiCompat() {
     }
@@ -47,7 +54,7 @@ final class SystemUiCompat {
 
     static boolean isSupportedAndroidVersion() {
         // minSdk 29 already prevents installation below Android 10.
-        return Build.VERSION.SDK_INT <= MAX_SUPPORTED_SDK;
+        return Build.VERSION.SDK_INT >= 29 && Build.VERSION.SDK_INT <= MAX_SUPPORTED_SDK;
     }
 
     static String platformLabel() {
@@ -155,7 +162,8 @@ final class SystemUiCompat {
     }
 
     static boolean isWeakBiometricAllowed(Object monitor, int userId) {
-        if (monitor == null || !isSupportedUser(userId)) {
+        if (monitor == null || !isSupportedUser(userId)
+                || resolveSelectedUserId(monitor) != userId) {
             return false;
         }
         if (!isFaceAllowedByPolicy(monitor, userId)) {
@@ -165,26 +173,17 @@ final class SystemUiCompat {
             return (boolean) XposedHelpers.callMethod(
                     monitor, "isUnlockingWithBiometricAllowed", false);
         } catch (Throwable ignored) {
-            // Android 10 uses a no-argument form.
+            // Only the Android 10 contract predates the explicit weak/strong argument.
         }
-        try {
-            return (boolean) XposedHelpers.callMethod(
-                    monitor, "isUnlockingWithBiometricAllowed");
-        } catch (Throwable ignored) {
-            // Some vendor builds expose the check only through StrongAuthTracker.
-        }
-        try {
-            Object tracker = XposedHelpers.getObjectField(monitor, "mStrongAuthTracker");
+        if (Build.VERSION.SDK_INT == 29) {
             try {
-                return (boolean) XposedHelpers.callMethod(
-                        tracker, "isUnlockingWithBiometricAllowed", false);
+                return (boolean) XposedHelpers.callMethod(monitor, "isUnlockingWithBiometricAllowed");
             } catch (Throwable ignored) {
-                return (boolean) XposedHelpers.callMethod(
-                        tracker, "isUnlockingWithBiometricAllowed");
+                // Unknown monitor contracts fail closed. Going directly to StrongAuthTracker
+                // would omit the monitor's biometric lockout and native policy checks.
             }
-        } catch (Throwable ignored) {
-            return false;
         }
+        return false;
     }
 
     private static boolean isFaceAllowedByPolicy(Object monitor, int userId) {
@@ -217,6 +216,8 @@ final class SystemUiCompat {
                 disabled = (int) XposedHelpers.callMethod(policyManager,
                         "getKeyguardDisabledFeatures", null, userId);
             } catch (Throwable ignored) {
+                // The no-user form follows this process's Android user. It is safe only
+                // because isSupportedUser requires the selected user to equal that user.
                 disabled = (int) XposedHelpers.callMethod(policyManager,
                         "getKeyguardDisabledFeatures", (Object) null);
             }
@@ -229,7 +230,8 @@ final class SystemUiCompat {
     }
 
     static boolean canSkipBouncer(Object monitor, int userId) {
-        if (monitor == null || !isSupportedUser(userId)) {
+        if (monitor == null || !isSupportedUser(userId)
+                || !isWeakBiometricAllowed(monitor, userId)) {
             return false;
         }
         try {
@@ -241,11 +243,16 @@ final class SystemUiCompat {
     }
 
     static boolean storeWeakAuthentication(Object monitor, int userId) {
-        if (monitor == null || !isSupportedUser(userId)) {
+        clearStoredWeakAuthentication(monitor, userId);
+        if (monitor == null || !isSupportedUser(userId)
+                || !isWeakBiometricAllowed(monitor, userId)) {
             activeAuthenticationAdapter = "用户解析失败（已保持锁定）";
             return false;
         }
-        clearStoredWeakAuthentication(monitor, userId);
+        if (canSkipBouncer(monitor, userId)) {
+            // Never overwrite native face/fingerprint/trust authentication owned by Android.
+            return false;
+        }
         for (String fieldName : authenticationFieldCandidates()) {
             Object state;
             try {
@@ -259,6 +266,10 @@ final class SystemUiCompat {
             try {
                 String adapter;
                 if (state instanceof SparseBooleanArray) {
+                    if (Build.VERSION.SDK_INT != 29
+                            || ((SparseBooleanArray) state).get(userId, false)) {
+                        continue;
+                    }
                     ((SparseBooleanArray) state).put(userId, true);
                     adapter = "legacy-boolean/" + shortField(fieldName);
                 } else if (state instanceof SparseArray) {
@@ -268,6 +279,9 @@ final class SystemUiCompat {
                     }
                     @SuppressWarnings("unchecked")
                     SparseArray<Object> sparseArray = (SparseArray<Object>) state;
+                    if (sparseArray.get(userId) != null) {
+                        continue;
+                    }
                     sparseArray.put(userId, authenticated);
                     adapter = "typed-object/" + shortField(fieldName);
                 } else {
@@ -279,6 +293,10 @@ final class SystemUiCompat {
                 }
                 activeAuthenticationField = fieldName;
                 activeAuthenticationUserId = userId;
+                activeAuthenticationMonitor = new WeakReference<>(monitor);
+                activeAuthenticationState = new WeakReference<>(state);
+                activeAuthenticationValue = state instanceof SparseArray
+                        ? ((SparseArray<?>) state).get(userId) : Boolean.TRUE;
                 activeAuthenticationAdapter = adapter;
                 return true;
             } catch (Throwable ignored) {
@@ -290,11 +308,12 @@ final class SystemUiCompat {
     }
 
     static boolean dispatchFaceAuthenticated(Object monitor, int userId) {
-        if (monitor == null || !isSupportedUser(userId)) {
+        clearStoredWeakAuthentication(monitor, userId);
+        if (monitor == null || !isSupportedUser(userId)
+                || !isWeakBiometricAllowed(monitor, userId)) {
             activeAuthenticationAdapter = "用户解析失败（已保持锁定）";
             return false;
         }
-        clearStoredWeakAuthentication(monitor, userId);
         try {
             XposedHelpers.callMethod(monitor, "onFaceAuthenticated", userId, false);
             // Modern SystemUI forwards this callback to the bouncer before its face
@@ -309,32 +328,46 @@ final class SystemUiCompat {
         } catch (Throwable ignored) {
             // Android 10 callback does not carry a strong-biometric flag.
         }
-        try {
-            XposedHelpers.callMethod(monitor, "onFaceAuthenticated", userId);
-            activeAuthenticationField = null;
-            activeAuthenticationUserId = -1;
-            activeAuthenticationAdapter = "callback-v1/face-async";
-            return true;
-        } catch (Throwable ignored) {
-            activeAuthenticationAdapter = "回调不兼容（已保持锁定）";
-            return false;
+        if (Build.VERSION.SDK_INT == 29) {
+            try {
+                XposedHelpers.callMethod(monitor, "onFaceAuthenticated", userId);
+                activeAuthenticationAdapter = "callback-v1/face-async";
+                return true;
+            } catch (Throwable ignored) {
+                // An unrecognized callback must not be treated as successful delivery.
+            }
         }
+        activeAuthenticationAdapter = "回调不兼容（已保持锁定）";
+        return false;
     }
 
     static void clearStoredWeakAuthentication(Object monitor, int userId) {
         String fieldName = activeAuthenticationField;
         int storedUserId = activeAuthenticationUserId;
-        if (monitor == null || fieldName == null || storedUserId < 0) {
+        Object owner = activeAuthenticationMonitor.get();
+        Object ownedState = activeAuthenticationState.get();
+        if (fieldName == null || storedUserId < 0) {
             return;
         }
         try {
-            Object state = XposedHelpers.getObjectField(monitor, fieldName);
-            deleteFromState(state, storedUserId);
+            // Clear the captured monitor's exact inserted value, even after user/monitor
+            // replacement. Never delete a newer native biometric result by field name alone.
+            Object state = owner == null ? null : XposedHelpers.getObjectField(owner, fieldName);
+            if (state == ownedState && state instanceof SparseArray
+                    && ((SparseArray<?>) state).get(storedUserId) == activeAuthenticationValue) {
+                deleteFromState(state, storedUserId);
+            } else if (state == ownedState && state instanceof SparseBooleanArray
+                    && Build.VERSION.SDK_INT == 29) {
+                deleteFromState(state, storedUserId);
+            }
         } catch (Throwable ignored) {
             // The system may already have cleared the one-shot state.
         } finally {
             activeAuthenticationField = null;
             activeAuthenticationUserId = INVALID_USER_ID;
+            activeAuthenticationMonitor = new WeakReference<>(null);
+            activeAuthenticationState = new WeakReference<>(null);
+            activeAuthenticationValue = null;
         }
     }
 
@@ -348,6 +381,57 @@ final class SystemUiCompat {
             }
         }
         return null;
+    }
+
+    static boolean isCameraHostAnimation(Object[] arguments) {
+        if (arguments == null) {
+            return false;
+        }
+        for (Object argument : arguments) {
+            if (argument == null || !argument.getClass().isArray()
+                    || !"android.view.RemoteAnimationTarget".equals(
+                    argument.getClass().getComponentType().getName())) {
+                continue;
+            }
+            // The first array contains app targets. A closing launcher may accompany our
+            // opening host; another opening/changing app must still run natively.
+            int count = Array.getLength(argument);
+            if (count == 0) {
+                return false;
+            }
+            int[] modes = new int[count];
+            boolean[] hosts = new boolean[count];
+            for (int index = 0; index < count; index++) {
+                try {
+                    Object target = Array.get(argument, index);
+                    modes[index] = XposedHelpers.getIntField(target, "mode");
+                    if (modes[index] == CameraHostTransitionPolicy.CLOSING) continue;
+                    Object task = XposedHelpers.getObjectField(target, "taskInfo");
+                    Object activity = XposedHelpers.getObjectField(task, "topActivity");
+                    if (!(activity instanceof ComponentName)) return false;
+                    ComponentName component = (ComponentName) activity;
+                    hosts[index] = CameraHostTransitionPolicy.isHost(component.getPackageName(), component.getClassName());
+                } catch (Throwable ignored) {
+                    return false;
+                }
+            }
+            return CameraHostTransitionPolicy.ownsOpeningTargets(modes, hosts);
+        }
+        return false;
+    }
+
+    @SuppressWarnings("deprecation")
+    static boolean isCameraHostForeground(Context context) {
+        try {
+            ActivityManager activityManager = context.getSystemService(ActivityManager.class);
+            List<ActivityManager.RunningTaskInfo> tasks = activityManager == null
+                    ? null : activityManager.getRunningTasks(1);
+            if (tasks == null || tasks.isEmpty() || tasks.get(0) == null) return false;
+            ComponentName top = tasks.get(0).topActivity;
+            return top != null && CameraHostTransitionPolicy.isHost(top.getPackageName(), top.getClassName());
+        } catch (Throwable unavailable) {
+            return false;
+        }
     }
 
     private static Object createBiometricAuthenticated(Object monitor) {
@@ -367,32 +451,29 @@ final class SystemUiCompat {
             return null;
         }
         try {
-            return XposedHelpers.newInstance(authenticatedClass, true, false);
+            Object result = XposedHelpers.newInstance(authenticatedClass, true, false);
+            return isKnownWeakAuthentication(result) ? result : null;
         } catch (Throwable ignored) {
             // Some optimized/vendor builds remove the constructor; allocate and populate fields.
         }
         try {
             Object result = allocateWithoutConstructor(authenticatedClass);
-            boolean authenticatedSet = false;
-            for (Class<?> current = authenticatedClass; current != null;
-                    current = current.getSuperclass()) {
-                for (Field field : current.getDeclaredFields()) {
-                    if (field.getType() != boolean.class) {
-                        continue;
-                    }
-                    field.setAccessible(true);
-                    String name = field.getName().toLowerCase(Locale.ROOT);
-                    if (name.contains("strong")) {
-                        field.setBoolean(result, false);
-                    } else if (name.contains("auth")) {
-                        field.setBoolean(result, true);
-                        authenticatedSet = true;
-                    }
-                }
-            }
-            return authenticatedSet ? result : null;
+            // Support the inspected AOSP record layout only. Guessing "auth"/"strong"
+            // substrings can silently create strong or malformed biometric state on a ROM.
+            XposedHelpers.setBooleanField(result, "mAuthenticated", true);
+            XposedHelpers.setBooleanField(result, "mIsStrongBiometric", false);
+            return isKnownWeakAuthentication(result) ? result : null;
         } catch (Throwable ignored) {
             return null;
+        }
+    }
+
+    private static boolean isKnownWeakAuthentication(Object value) {
+        try {
+            return XposedHelpers.getBooleanField(value, "mAuthenticated")
+                    && !XposedHelpers.getBooleanField(value, "mIsStrongBiometric");
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 
@@ -425,15 +506,6 @@ final class SystemUiCompat {
             }
         } catch (Throwable ignored) {
             // Fail closed; a later sleep callback also clears SystemUI's biometric caches.
-        }
-    }
-
-    private static void deleteFieldForUser(Object monitor, String fieldName, int userId) {
-        try {
-            deleteFromState(XposedHelpers.getObjectField(monitor, fieldName), userId);
-        } catch (Throwable ignored) {
-            // A vendor callback may use a different internal cache; its native sleep path
-            // remains responsible for clearing that cache.
         }
     }
 

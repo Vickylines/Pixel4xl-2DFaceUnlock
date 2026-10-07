@@ -12,7 +12,13 @@ final class FaceGeometry {
             float noseX, float noseY, float mouthLeftX, float mouthLeftY,
             float mouthRightX, float mouthRightY, float mouthBottomX,
             float mouthBottomY) {
-        if (boxWidth <= 1f || boxHeight <= 1f) {
+        if (!Float.isFinite(boxWidth) || !Float.isFinite(boxHeight)
+                || boxWidth <= 1f || boxHeight <= 1f
+                || !pointIsFinite(leftEyeX, leftEyeY)
+                || !pointIsFinite(rightEyeX, rightEyeY) || !pointIsFinite(noseX, noseY)
+                || !pointIsFinite(mouthLeftX, mouthLeftY)
+                || !pointIsFinite(mouthRightX, mouthRightY)
+                || !pointIsFinite(mouthBottomX, mouthBottomY)) {
             return null;
         }
         if (leftEyeX > rightEyeX) {
@@ -26,7 +32,7 @@ final class FaceGeometry {
         float eyeDx = rightEyeX - leftEyeX;
         float eyeDy = rightEyeY - leftEyeY;
         float eyeDistance = hypot(eyeDx, eyeDy);
-        if (eyeDistance < 8f) {
+        if (!Float.isFinite(eyeDistance) || eyeDistance < 8f) {
             return null;
         }
         float axisX = eyeDx / eyeDistance;
@@ -49,12 +55,19 @@ final class FaceGeometry {
                         / boxHeight,
                 project(noseX - eyeMidX, noseY - eyeMidY, axisX, axisY) / boxWidth
         };
-        for (float value : result) {
-            if (!Float.isFinite(value)) {
-                return null;
-            }
+        return isValid(result) ? result : null;
+    }
+
+    static boolean isValid(float[] values) {
+        if (values == null || values.length != LENGTH) return false;
+        for (float value : values) {
+            if (!Float.isFinite(value) || value < -2f || value > 2f) return false;
         }
-        return result;
+        return true;
+    }
+
+    private static boolean pointIsFinite(float x, float y) {
+        return Float.isFinite(x) && Float.isFinite(y);
     }
 
     private static float project(float x, float y, float axisX, float axisY) {

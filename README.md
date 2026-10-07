@@ -4,13 +4,15 @@
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel4xl-2DFaceUnlock)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-这是一个面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL 便利解锁模块。0.8.1 在 Android 10–16 的 AOSP SystemUI 运行时适配基础上，同时校验局部纹理与脸部几何比例，并保留眼位对齐、自动校准，补充有时限的多帧确认和会话结果防重放。
+这是一个面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL 便利解锁模块。当前版本为 0.9.3：在保留 v3 人脸模板、纹理与几何双信号门槛的基础上，拆分相机、识别、存储与 SystemUI 会话职责，修复失败退出与上滑流程，并减少相机启动前的固定等待、IPC 和模板重复读取。
+
+本次重构的设计见 [架构说明](ARCHITECTURE.md)，实际验证与尚未覆盖的场景见 [重构验证报告](REFACTOR-REPORT.md)。0.9.0–0.9.2 是本地验证迭代，合并后的安装包随 0.9.3 发布。
 
 > 本项目不是 Google、LineageOS、Magisk 或 LSPosed 的官方项目。普通 RGB 2D 人脸可能被照片或视频绕过，只适合便利解锁。
 
 ## 下载
 
-- [下载最新版 APK](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
+- [下载 0.9.3 APK](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.9.3/Pixel2DFaceUnlock-coral-0.9.3-refactor.apk) · [发布说明](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.9.3) · [SHA-256 校验](dist/SHA256SUMS-0.9.3.txt)
 - [完整中文安装说明](dist/Pixel_2D人脸解锁_安装使用说明.txt)
 - [下载 0.8.1 安装包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.8.1/Pixel2DFaceUnlock-coral-0.8.1-safety-speed.apk) · [发布说明](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.8.1) · [安全与速度验证报告](SAFETY-SPEED-REPORT.md)。
 
@@ -21,7 +23,7 @@
 - 优先 ROM：Pixel 原生系统以及 AOSP/LineageOS 类 SystemUI。
 - LSPosed 作用域：只勾选 `com.android.systemui`（系统界面）。
 
-“Android 10–16 适配”不等于所有组合都已真机验证：0.8.0 已在 Pixel 4 XL（coral）、LineageOS 23.2、Android 16 / API 36 完成覆盖安装、LSPosed/SystemUI 注入、相机宿主输入层、睁眼解锁、双眼/单眼闭合拒绝和快速重锁回归。Android 10–15 的路径依据对应 AOSP SystemUI 数据结构进行了兼容编码和构建检查，仍需在各版本真机上逐一验证。非 Pixel、深度改造的厂商 SystemUI、访客／辅助用户、Android 9 以下及 Android 17 以上会安全停用钩子。
+“Android 10–16 适配”不等于所有组合都已真机验证：0.9.3 已在 Pixel 4 XL（coral）、LineageOS 23.2、Android 16 / API 36 完成覆盖安装、LSPosed/SystemUI 加载、正常识别上滑和闭眼失败后再次识别的人工复测。旧版双眼/单眼闭合拒绝及输入层检查记录保留在历史测试报告中。Android 10–15 的路径依据对应 AOSP SystemUI 数据结构进行了兼容编码和构建检查，仍需在各版本真机上逐一验证。非 Pixel、深度改造的厂商 SystemUI、访客／辅助用户、Android 9 以下及 Android 17 以上会安全停用钩子。
 
 详细状态见 [COMPATIBILITY.md](COMPATIBILITY.md)。
 
@@ -77,13 +79,30 @@
 - 重启后第一次解锁、锁定模式、系统要求强认证或弱生物识别超时：必须输入 PIN/密码，模块不会绕过。
 - 快速锁屏再亮屏：创建新会话，不复用上一次的人脸结果。
 
+## 0.9.0 重构
+
+- `FaceCaptureActivity` 只协调流程；独立的相机会话管理 CameraX、ML Kit、帧释放与自己的用例解绑。
+- Android 无关的质量策略与识别引擎统一处理眼睛、姿态、画质、双信号匹配及多帧投票；保留原算法和阈值。相机时间归一化后再检查重复、逆序、过期与会话边界。
+- 录入样本使用独立副本及采集时间间隔；取消先完成时禁止覆盖旧模板。录入有 45 秒时限，识别含初始化在内有 12 秒时限。
+- SystemUI 入口只安装钩子，配置与授权 IPC 移到后台；成功提交前重验启动用户、唤醒代次、配置版本和系统弱认证策略。
+- 设置变更会撤销旧会话及本模块的弱认证缓存。配置与模板使用跨进程文件事务，损坏数据安全停用，保存失败明确反馈。
+- 透明宿主完成相机工作后主动释放自己的锁屏遮挡与常亮标记；不拦截其他来电、闹钟 Activity 的遮挡事件。
+- 0.8.x 的有效 v3 模板可以直接使用，无需重新录入。设置页后台读写，并显示真实版本和心跳时间范围。
+
+## 0.9.3 启动与失败流程优化
+
+- 合并启动前的状态读取和一次性授权，在一个文件事务中生成配置快照；应用消费授权并读取识别设置也在同一事务完成。相机启动前的 Provider 调用由两次减为一次，模板解码由四次减为两次。
+- 移除亮屏后固定 620 ms 的等待，保留实际锁屏、电源、用户、配置版本及系统弱认证检查。
+- 失败、取消和超时立即结束会话；持续闭眼约 1.5 秒停止本轮识别，宿主退出释放自己的遮挡和常亮标志。成功后可正常上滑，失败后仍可使用原生密码界面。
+- 139 项 JVM 测试通过；真机存储回归在 11 个隔离流程中通过 216 次断言。Pixel 4 XL 人工复测确认正常解锁、闭眼失败恢复、速度和触摸均正常。耗时仍会随光线、姿态和首次匹配变化，详见验证报告。
+
 ## 使用方法
 
 1. 覆盖安装 APK，不要卸载旧版；相同包名升级会保留设置和旧模板文件。
 2. 在 LSPosed 中启用本模块，作用域只选择“系统界面”。
 3. 重启手机或重启 SystemUI；重启后的第一次解锁先输入 PIN。
 4. 打开“Pixel 2D 人脸解锁”，确认“LSPosed 钩子已加载”，并查看下面的运行时适配报告。
-5. 从 0.7.x 或更早版本升级到 0.8.x 后，按提示重新录入一次以建立 v3 双信号模板；自然看向屏幕即可，不要求眨眼或转头。
+5. 0.8.x / 0.9.x 的有效 v3 模板无需重新录入；从 0.7.x 或更早版本升级时，按提示重新录入一次以建立 v3 双信号模板。自然看向屏幕即可，不要求眨眼或转头。
 
 ## 安全说明
 
@@ -109,6 +128,8 @@
 Windows 也可以运行 `build.ps1`。默认执行单元测试、Release 构建和 Lint，产物位于 `app/build/outputs/apk/release/app-release.apk`。真机存储回归可额外构建 `:app:assembleDebugAndroidTest`，其合成数据仅写入隔离的缓存目录。
 
 本地 Release APK 关闭调试标记，但沿用现有 Android Debug 签名证书，以便覆盖升级先前测试版；证书 SHA-256 为 `769bae7364e73ad5c73835c7fbce30994ea4e9ff9efd32fde51404886d5ad7da`。自行编译的 APK 如果签名不同，不能直接覆盖安装。
+
+GitHub Actions 的 APK 使用 CI 环境生成的证书，供构建检查使用。覆盖升级请下载 GitHub Release 中经真机测试、与旧版签名一致的安装包。
 
 ## 开源协议与第三方组件
 

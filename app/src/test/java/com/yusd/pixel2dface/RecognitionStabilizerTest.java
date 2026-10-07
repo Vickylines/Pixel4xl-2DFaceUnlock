@@ -114,4 +114,37 @@ public final class RecognitionStabilizerTest {
             }
         }
     }
+
+    @Test public void clearRetainsReplayWatermarkUntilAnExplicitNewSession() {
+        add(0.20f, true, 100L);
+        votes.clear();
+        assertEquals(0, add(0.20f, true, 100L).observations);
+        assertEquals(0, add(0.20f, true, 100L).observations);
+        votes.reset();
+        assertEquals(1, add(0.20f, true, 100L).observations);
+    }
+
+    @Test public void changingBaseThresholdCannotReusePreviousProfileVotes() {
+        for (int i = 0; i < 3; i++) add(0.20f, true, i * 33L);
+        RecognitionStabilizer.Result changed = votes.add(0.20f, 0.27f, 0.27f,
+                true, true, 99L);
+        assertEquals(1, changed.matches);
+        assertFalse(changed.confirmed);
+    }
+
+    @Test public void malformedScoreHardRejectsInsteadOfOccupyingOneOrdinaryMiss() {
+        for (int i = 0; i < 3; i++) add(0.20f, false, i * 60L);
+        assertEquals(0, add(Float.NaN, false, 180L).observations);
+        assertEquals(1, add(0.20f, false, 240L).matches);
+    }
+
+    @Test public void ringWrapCannotReviveExpiredEvidence() {
+        for (int i = 0; i < 100; i++) {
+            RecognitionStabilizer.Result result = add(i % 3 == 0 ? 0.40f : 0.26f,
+                    false, i * 60L);
+            assertTrue(result.observations <= RecognitionStabilizer.WINDOW_SIZE);
+            if (i >= 5) assertEquals(4, result.matches);
+            assertEquals(i >= 5 && i % 3 == 2, result.confirmed);
+        }
+    }
 }

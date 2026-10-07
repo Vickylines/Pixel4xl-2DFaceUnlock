@@ -3,1060 +3,354 @@ package com.yusd.pixel2dface;
 import android.Manifest;
 import android.app.Activity;
 import android.app.KeyguardManager;
-import android.content.BroadcastReceiver;
-import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.pm.PackageManager;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.Paint;
-import android.graphics.PointF;
-import android.graphics.Rect;
-import android.graphics.RectF;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.SystemClock;
-import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.WindowManager;
-import android.widget.Button;
-import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.TextView;
-
 import androidx.activity.ComponentActivity;
+import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
-import androidx.camera.core.CameraSelector;
-import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
-import androidx.camera.core.Preview;
-import androidx.camera.lifecycle.ProcessCameraProvider;
-import androidx.camera.view.PreviewView;
-
-import com.google.common.util.concurrent.ListenableFuture;
-import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.face.Face;
-import com.google.mlkit.vision.face.FaceDetector;
-import com.google.mlkit.vision.face.FaceContour;
-import com.google.mlkit.vision.face.FaceLandmark;
-
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-@androidx.annotation.OptIn(markerClass = androidx.camera.core.ExperimentalGetImage.class)
+/** Coordinates one capture workflow; camera, measurements, policy and host have separate owners. */
 public class FaceCaptureActivity extends ComponentActivity {
-    private static final String TAG = "Pixel2DFace";
     private static final int REQUEST_CAMERA = 200;
-    private static final long SESSION_TIMEOUT_MS = 12_000L;
-    private static final long MAX_ANALYSIS_AGE_MS = 750L;
-    private static final int ENROLLMENT_SAMPLES = 10;
-    private static final int REQUIRED_MATCHES = RecognitionStabilizer.REQUIRED_MATCHES;
-    private static final float MAX_ABS_YAW_DEGREES = 28f;
-    private static final float MAX_ABS_PITCH_DEGREES = 22f;
-    private static final float MAX_ABS_ROLL_DEGREES = 25f;
-    private static final float MIN_FACE_WIDTH_RATIO = 0.18f;
-    private static final float MAX_CENTER_OFFSET_X_RATIO = 0.34f;
-    private static final float MAX_CENTER_OFFSET_Y_RATIO = 0.36f;
-    private static final float MIN_BRIGHTNESS = 12f;
-    private static final float MAX_BRIGHTNESS = 248f;
-    private static final float MIN_CONTRAST = 6f;
-    private static final float MIN_SHARPNESS = 1.5f;
-
-    private final ExecutorService analyzerExecutor = Executors.newSingleThreadExecutor();
-    private final AtomicBoolean processing = new AtomicBoolean(false);
-    private final AtomicBoolean finished = new AtomicBoolean(false);
-    private final AtomicBoolean hostFinishedBroadcastSent = new AtomicBoolean(false);
-    private final AtomicBoolean resourceReleaseRequested = new AtomicBoolean(false);
-    private final AtomicBoolean resourcesReleased = new AtomicBoolean(false);
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final LbpDescriptor.Workspace descriptorWorkspace = new LbpDescriptor.Workspace();
-    private final Object detectorLock = new Object();
-
-    private final Runnable keyguardExitWatcher = new Runnable() {
-        @Override
-        public void run() {
-            if (!Constants.MODE_UNLOCK.equals(mode) || isFinishing() || isDestroyed()) {
-                return;
-            }
-            KeyguardManager keyguardManager = getSystemService(KeyguardManager.class);
-            // isKeyguardLocked() becomes false while a showWhenLocked Activity merely
-            // occludes keyguard. isDeviceLocked() only becomes false after the user really
-            // dismisses the lock screen, which prevents the premature task close/white flash.
-            if (keyguardManager == null || !keyguardManager.isDeviceLocked()) {
-                finishHostWithoutTransition();
-                return;
-            }
-            mainHandler.postDelayed(this, 80L);
-        }
-    };
-
-    private PreviewView previewView;
-    private TextView instructionView;
-    private TextView detailView;
-    private ProcessCameraProvider cameraProvider;
-    private ImageAnalysis analysisUseCase;
-    private Preview previewUseCase;
-    private FaceDetector detector;
+    private static final long RECOGNITION_TIMEOUT_MS = 12_000;
+    private static final long ENROLLMENT_TIMEOUT_MS = 45_000;
+    private final AtomicBoolean finished = new AtomicBoolean();
+    private final AtomicBoolean outcomeLogged = new AtomicBoolean();
+    private final Map<String, Integer> frameOutcomes = new LinkedHashMap<>();
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private final FaceFrameExtractor extractor = new FaceFrameExtractor();
+    private final EnrollmentSession enrollment = new EnrollmentSession();
+    private final PassiveUnlockFailurePolicy passiveFailure = new PassiveUnlockFailurePolicy();
+    private CameraCaptureSession camera;
+    private CaptureContentView content;
+    private UnlockCameraHost host;
+    private RecognitionEngine recognition;
+    private TemplateStore.RecognitionSettings settings;
     private String mode;
     private String sessionToken;
-    private long sessionStartedAt;
-    private long captureCreatedAt;
+    private long generation;
+    private long createdAt;
     private long engineReadyAt;
-    private long frameStartedAt;
-    private long frameCapturedAtMs;
     private long firstFrameAt;
-    private long lastEnrollmentCaptureAt;
+    private long firstFaceAt;
+    private long firstQualityAt;
+    private long firstMatchAt;
+    private long lastUiUpdateAt;
     private long lastDiagnosticAt;
-    private int processedFrameCount;
-    private boolean confirmedFastPath;
+    private int processedFrames;
     private float bestScore = Float.MAX_VALUE;
+    private boolean initialized;
 
-    private final List<float[]> enrollmentSamples = new ArrayList<>();
-    private final List<float[]> enrollmentGeometrySamples = new ArrayList<>();
-
-    private IdentityModel identityModel;
-    private float recognitionThreshold = TemplateStore.DEFAULT_THRESHOLD;
-    private final RecognitionStabilizer recognitionStabilizer = new RecognitionStabilizer();
-    private int consecutiveMatches;
-    private boolean eyesCurrentlyOpen;
-    private Float lastLeftEyeProbability;
-    private Float lastRightEyeProbability;
-    private float lastLeftEyeContourRatio;
-    private float lastRightEyeContourRatio;
-    private int consecutiveOpenEyeFrames;
-    private float lastFrontScore = Float.MAX_VALUE;
-    private float lastGeometryScore = Float.MAX_VALUE;
-    private float lastGeometryPeak = Float.MAX_VALUE;
-    private int lastConsistentCells;
-    private int lastConsistentCoreCells;
-    private float lastBrightness;
-    private float lastContrast;
-    private float lastSharpness;
-    private float lastYaw;
-    private float lastPitch;
-    private float lastRoll;
-    private float lastFaceWidthRatio;
-    private float lastCenterOffsetX;
-    private float lastCenterOffsetY;
-    private BroadcastReceiver screenOffReceiver;
-    private int hostReadyAttempts;
-
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        captureCreatedAt = SystemClock.elapsedRealtime();
+        createdAt = SystemClock.elapsedRealtime();
         mode = getIntent().getStringExtra(Constants.EXTRA_MODE);
-        if (mode == null) {
-            mode = Constants.MODE_TEST;
-        }
-        boolean unlockMode = Constants.MODE_UNLOCK.equals(mode);
-        if (unlockMode != isExternalUnlockHost()) {
-            finish();
-            return;
+        if (mode == null) mode = Constants.MODE_TEST;
+        if ((!Constants.MODE_UNLOCK.equals(mode) && !Constants.MODE_ENROLL.equals(mode)
+                && !Constants.MODE_TEST.equals(mode)) || isUnlock() != isExternalUnlockHost()) {
+            finish(); return;
         }
         sessionToken = getIntent().getStringExtra(Constants.EXTRA_SESSION_TOKEN);
-        if (unlockMode && !TemplateStore.consumeAuthorizedUnlockSession(this, sessionToken)) {
-            finish();
-            return;
+        android.util.Log.i("Pixel2DFace", "Capture created mode=" + mode);
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() { finishFailure(false, "已取消"); }
+        });
+        if (!isUnlock()) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE
+                    | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
+            content = new CaptureContentView(this, isEnrollment(), () -> finishFailure(false, "已取消"));
+            setContentView(content);
         }
-        if (Constants.MODE_UNLOCK.equals(mode)) {
-            setShowWhenLocked(true);
-            setTurnScreenOn(true);
-        }
-
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE
-                | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        configureWindow();
-        if (Constants.MODE_UNLOCK.equals(mode)) {
-            registerScreenOffReceiver();
-        }
-        setContentView(buildContent());
-        if (Constants.MODE_UNLOCK.equals(mode)) {
-            configureSilentUnlockWindow();
-            getWindow().getDecorView().post(this::notifySystemUiHostReady);
-        }
-        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            initializeEngineAndStartCamera();
-        } else if (Constants.MODE_UNLOCK.equals(mode)) {
-            finishFailure(false, "未授予相机权限");
-        } else {
-            requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA);
-        }
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) initialize();
+        else if (isUnlock()) finishFailure(false, "未授予相机权限");
+        else requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA);
     }
 
-    /** Only the exported SystemUI host subclass may enter silent lock-screen mode. */
-    protected boolean isExternalUnlockHost() {
-        return false;
+    protected boolean isExternalUnlockHost() { return false; }
+    private boolean isUnlock() { return Constants.MODE_UNLOCK.equals(mode); }
+    private boolean isEnrollment() { return Constants.MODE_ENROLL.equals(mode); }
+
+    @Override public void onRequestPermissionsResult(int requestCode,
+            @NonNull String[] permissions, @NonNull int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode != REQUEST_CAMERA || finished.get()) return;
+        if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) initialize();
+        else finishFailure(false, "需要相机权限才能识别人脸");
     }
 
-    private View buildContent() {
-        if (Constants.MODE_UNLOCK.equals(mode)) {
-            return buildUnlockContent();
-        }
-        return buildCameraContent();
-    }
-
-    private View buildUnlockContent() {
-        FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.TRANSPARENT);
-        return root;
-    }
-
-    private View buildCameraContent() {
-        FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.BLACK);
-
-        previewView = new PreviewView(this);
-        previewView.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
-        previewView.setScaleType(PreviewView.ScaleType.FILL_CENTER);
-        root.addView(previewView, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        root.addView(new FaceGuideView(this), new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        LinearLayout top = new LinearLayout(this);
-        top.setOrientation(LinearLayout.VERTICAL);
-        top.setGravity(Gravity.CENTER_HORIZONTAL);
-        top.setPadding(dp(24), dp(36), dp(24), dp(16));
-        top.setBackgroundColor(Color.argb(145, 0, 0, 0));
-        instructionView = new TextView(this);
-        instructionView.setTextColor(Color.WHITE);
-        instructionView.setTextSize(22);
-        instructionView.setGravity(Gravity.CENTER);
-        instructionView.setText(initialInstruction());
-        top.addView(instructionView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        detailView = new TextView(this);
-        detailView.setTextColor(Color.rgb(215, 225, 235));
-        detailView.setTextSize(14);
-        detailView.setGravity(Gravity.CENTER);
-        detailView.setPadding(0, dp(8), 0, 0);
-        detailView.setText("请将脸保持在取景框内");
-        top.addView(detailView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        FrameLayout.LayoutParams topParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP);
-        root.addView(top, topParams);
-
-        Button cancel = new Button(this);
-        cancel.setText("取消");
-        cancel.setTextSize(15);
-        cancel.setAllCaps(false);
-        cancel.setOnClickListener(v -> finishFailure(false, "已取消"));
-        FrameLayout.LayoutParams cancelParams = new FrameLayout.LayoutParams(
-                dp(148), dp(54), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        cancelParams.bottomMargin = dp(36);
-        root.addView(cancel, cancelParams);
-        return root;
-    }
-
-    private void configureWindow() {
-        if (Constants.MODE_UNLOCK.equals(mode)) {
-            getWindow().addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                    | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                    | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL);
-            getWindow().setStatusBarColor(Color.TRANSPARENT);
-            getWindow().setNavigationBarColor(Color.TRANSPARENT);
-            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-            getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
-            return;
-        }
-        getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
-    }
-
-    private void configureSilentUnlockWindow() {
-        WindowManager.LayoutParams attributes = getWindow().getAttributes();
-        attributes.width = 1;
-        attributes.height = 1;
-        attributes.gravity = Gravity.TOP | Gravity.START;
-        attributes.x = 0;
-        attributes.y = 0;
-        attributes.dimAmount = 0f;
-        // A transparent background still has WindowManager alpha=1 and Android 12+ may block
-        // cross-UID touches behind it. Alpha 0 is the platform-defined safe pass-through case.
-        attributes.alpha = 0f;
-        getWindow().setAttributes(attributes);
-        getWindow().setLayout(1, 1);
-    }
-
-    private void notifySystemUiHostReady() {
-        if (!Constants.MODE_UNLOCK.equals(mode) || finished.get() || sessionToken == null) {
-            return;
-        }
-        // LayoutParams.token is the ActivityRecord token expected by ActivityClient. The
-        // decor view's window token identifies IWindow instead and cannot disable the sink.
-        android.os.IBinder activityToken = getWindow().getAttributes().token;
-        if (activityToken == null) {
-            if (hostReadyAttempts++ < 12) {
-                mainHandler.postDelayed(this::notifySystemUiHostReady, 16L);
+    private void initialize() {
+        if (initialized || finished.get()) return;
+        initialized = true;
+        camera = new CameraCaptureSession(this, new CameraCaptureSession.Listener() {
+            @Override public void onEngineReady(long elapsedMs) {
+                engineReadyAt = elapsedMs;
+                android.util.Log.i("Pixel2DFace", "Capture engine ready mode=" + mode
+                        + " initMs=" + (elapsedMs - createdAt));
             }
-            return;
-        }
-        Bundle extras = new Bundle();
-        extras.putString(Constants.EXTRA_SESSION_TOKEN, sessionToken);
-        extras.putBinder(Constants.EXTRA_ACTIVITY_TOKEN, activityToken);
-        sendBroadcast(new Intent(Constants.ACTION_CAMERA_HOST_READY)
-                .setPackage(Constants.SYSTEM_UI_PACKAGE)
-                .putExtras(extras));
-    }
-
-    private String initialInstruction() {
-        if (Constants.MODE_ENROLL.equals(mode)) {
-            return "录入人脸：请正视镜头";
-        }
-        if (Constants.MODE_UNLOCK.equals(mode)) {
-            return "正在识别人脸";
-        }
-        return "测试人脸识别";
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
-            @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_CAMERA && grantResults.length > 0
-                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            initializeEngineAndStartCamera();
-        } else {
-            finishFailure(false, "需要相机权限才能识别人脸");
-        }
-    }
-
-    private void initializeEngineAndStartCamera() {
-        analyzerExecutor.execute(() -> {
+            @Override public void onFrame(ImageProxy image, int rotation, List<Face> faces,
+                    long capturedAtMs) { processFrame(image, rotation, faces, capturedAtMs); }
+            @Override public void onRejectedFrame(String reason) {
+                if (finished.get()) return;
+                recordFrameOutcome("camera_" + reason);
+                passiveFailure.breakContinuity();
+                if (recognition != null) recognition.clear();
+                showDetail("人脸检测暂时不可用，请保持手机稳定");
+            }
+            @Override public void onCameraError(String message) { finishFailure(false, message); }
+        });
+        // Include initialization in the deadline so a stalled provider cannot leave a host alive.
+        main.postDelayed(() -> finishFailure(isUnlock(), "识别超时，请重试"),
+                isEnrollment() ? ENROLLMENT_TIMEOUT_MS : RECOGNITION_TIMEOUT_MS);
+        camera.execute(() -> {
             try {
-                if (!Constants.MODE_ENROLL.equals(mode)) {
-                    TemplateStore.RecognitionSettings settings =
-                            TemplateStore.loadRecognitionSettings(this);
-                    identityModel = settings.model;
-                    recognitionThreshold = settings.threshold;
-                    if (identityModel == null) {
-                        finishFailure(false, "尚未录入人脸");
-                        return;
+                if (!isEnrollment()) {
+                    settings = isUnlock()
+                            ? TemplateStore.consumeAuthorizedRecognitionSettings(this, sessionToken)
+                            : TemplateStore.loadRecognitionSettings(this);
+                    if (settings == null) {
+                        finishFailure(false, "识别会话未获授权、已过期或配置已变更"); return;
                     }
-                    if (Constants.MODE_UNLOCK.equals(mode) && (!settings.state.enabled
+                    if (settings.model == null) {
+                        finishFailure(false, "尚未录入有效人脸，请重新录入"); return;
+                    }
+                    if (isUnlock() && (!settings.state.enabled
                             || settings.state.lockoutUntil > System.currentTimeMillis())) {
-                        finishFailure(false, "人脸解锁已停用或暂时锁定");
-                        return;
+                        finishFailure(false, "人脸解锁已停用或暂时锁定"); return;
                     }
+                    recognition = new RecognitionEngine(settings.model, settings.threshold);
+                    generation = recognition.beginSession(createdAt);
                 }
-                FaceDetector createdDetector = FaceDetectorFactory.create();
-                synchronized (detectorLock) {
-                    if (resourceReleaseRequested.get() || resourcesReleased.get()) {
-                        createdDetector.close();
-                        return;
+                main.post(() -> {
+                    if (finished.get() || isFinishing() || isDestroyed()) return;
+                    if (isUnlock()) {
+                        PowerManager power = getSystemService(PowerManager.class);
+                        KeyguardManager keyguard = getSystemService(KeyguardManager.class);
+                        if (power == null || !power.isInteractive() || keyguard == null
+                                || !keyguard.isDeviceLocked()) { finishHost("inactive_at_start"); return; }
+                        host = new UnlockCameraHost(this, sessionToken, this::finishHost);
+                        host.attach();
+                        android.util.Log.i("Pixel2DFace", "Capture host attached");
                     }
-                    detector = createdDetector;
-                }
-                engineReadyAt = SystemClock.elapsedRealtime();
-                mainHandler.post(() -> {
-                    if (!finished.get() && !isFinishing() && !isDestroyed()) {
-                        startCamera();
-                    }
+                    camera.execute(() -> {
+                        try { camera.start(content == null ? null : content.preview); }
+                        catch (RuntimeException failure) { finishFailure(false, "人脸引擎初始化失败"); }
+                    });
                 });
-            } catch (Throwable error) {
+            } catch (RuntimeException failure) {
+                android.util.Log.w("Pixel2DFace", "Capture initialization failed", failure);
                 finishFailure(false, "人脸引擎初始化失败");
             }
         });
     }
 
-    private void startCamera() {
-        sessionStartedAt = SystemClock.elapsedRealtime();
-        ListenableFuture<ProcessCameraProvider> future = ProcessCameraProvider.getInstance(this);
-        future.addListener(() -> {
-            try {
-                if (finished.get() || resourceReleaseRequested.get()
-                        || isFinishing() || isDestroyed()) {
-                    return;
-                }
-                cameraProvider = future.get();
-                ImageAnalysis analysis = new ImageAnalysis.Builder()
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .setTargetResolution(new android.util.Size(480, 360))
-                        .build();
-                analysisUseCase = analysis;
-                analysis.setAnalyzer(analyzerExecutor, this::analyzeFrame);
-                if (Constants.MODE_UNLOCK.equals(mode)) {
-                    // Analysis-only binding keeps the front camera feed completely hidden.
-                    cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA,
-                            analysis);
-                } else {
-                    Preview preview = new Preview.Builder().build();
-                    previewUseCase = preview;
-                    preview.setSurfaceProvider(previewView.getSurfaceProvider());
-                    cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA,
-                            preview, analysis);
-                }
-                if (!Constants.MODE_ENROLL.equals(mode)) {
-                    mainHandler.postDelayed(this::handleTimeout, SESSION_TIMEOUT_MS);
-                }
-            } catch (Exception error) {
-                finishFailure(false, "无法启动前置摄像头：" + error.getClass().getSimpleName());
+    private void processFrame(ImageProxy image, int rotation, List<Face> faces, long capturedAt) {
+        if (finished.get()) return;
+        if (firstFrameAt == 0) firstFrameAt = SystemClock.elapsedRealtime();
+        if (firstFaceAt == 0 && faces != null && !faces.isEmpty()) {
+            firstFaceAt = SystemClock.elapsedRealtime();
+        }
+        processedFrames++;
+        FaceFrameExtractor.Result frame = extractor.extract(image, rotation, faces);
+        if (isUnlock() && passiveFailure.shouldStop(frame.reason, capturedAt)) {
+            recordFrameOutcome("CLOSED_EYES_STOP");
+            finishFailure(true, "持续闭眼，已停止本轮识别，请使用密码或重新亮屏");
+            return;
+        }
+        if (frame.reason != FrameQualityPolicy.Reason.NONE) {
+            recordFrameOutcome(frame.reason == FrameQualityPolicy.Reason.EYES_CLOSED
+                    && frame.sample != null ? "EYE_" + PassiveEyeGate.problem(
+                            frame.sample.leftEyeProbability, frame.sample.rightEyeProbability,
+                            frame.sample.leftEyeContourRatio, frame.sample.rightEyeContourRatio).name()
+                    : frame.reason.name());
+            if (recognition != null) recognition.clear();
+            showDetail(frame.reason.message); return;
+        }
+        if (firstQualityAt == 0) firstQualityAt = SystemClock.elapsedRealtime();
+        if (isEnrollment()) {
+            long evaluatedAt = SystemClock.elapsedRealtime();
+            if (capturedAt > evaluatedAt
+                    || evaluatedAt - capturedAt > RecognitionEngine.MAX_FRAME_AGE_MS) return;
+            if (!enrollment.add(capturedAt, frame.sample, frame.texture, frame.geometry)) {
+                showDetail("请自然正视镜头并保持稳定"); return;
             }
-        }, getMainExecutor());
-    }
-
-    private void analyzeFrame(ImageProxy image) {
-        synchronized (detectorLock) {
-            if (finished.get() || resourceReleaseRequested.get()
-                    || resourcesReleased.get() || !processing.compareAndSet(false, true)) {
-                image.close();
-                return;
+            showInstruction("录入人脸：自然看向屏幕即可");
+            showDetail("正在自动校准，已采集 " + enrollment.count() + "/"
+                    + EnrollmentSession.REQUIRED_SAMPLES);
+            if (enrollment.isComplete() && !finished.get()) {
+                IdentityModel model = enrollment.buildModel();
+                // Claim the outcome before touching the existing enrollment. Cancellation
+                // either wins this CAS and prevents the write, or observes a committed capture.
+                if (!finished.compareAndSet(false, true)) return;
+                boolean saved;
+                try { saved = TemplateStore.saveIdentityModel(this, model); }
+                catch (RuntimeException failure) { saved = false; }
+                if (saved) publishSuccess(model.textureThreshold, false);
+                else publishFailure("保存人脸失败，请重试");
             }
-        }
-        android.media.Image mediaImage = image.getImage();
-        if (mediaImage == null) {
-            completeFrame(image);
             return;
         }
-        int rotation = image.getImageInfo().getRotationDegrees();
-        InputImage inputImage;
-        try {
-            inputImage = InputImage.fromMediaImage(mediaImage, rotation);
-        } catch (Exception error) {
-            completeFrame(image);
-            return;
+        RecognitionEngine.Decision decision = recognition.recognize(generation, capturedAt,
+                SystemClock.elapsedRealtime(), frame.sample, frame.texture, frame.geometry);
+        if (decision.match.accepted && firstMatchAt == 0) firstMatchAt = SystemClock.elapsedRealtime();
+        recordFrameOutcome(decision.reason == FrameQualityPolicy.Reason.NONE
+                ? decision.votes.confirmed ? "CONFIRMED"
+                : decision.votes.stable ? "MATCH_PENDING" : "MATCH_UNSTABLE"
+                : decision.reason.name());
+        if (Float.isFinite(decision.match.textureScore)) bestScore = Math.min(bestScore, decision.match.textureScore);
+        showDetail(decision.reason == FrameQualityPolicy.Reason.NONE
+                ? "正在确认 " + decision.votes.matches + "/" + RecognitionStabilizer.REQUIRED_MATCHES
+                : decision.reason.message);
+        if (decision.votes.confirmed) finishSuccess(decision.votes.meanScore, decision.votes.fastPath);
+    }
+
+    /** Runs on the analysis lane; validation and persistence never block the main thread. */
+    private void finishSuccess(float score, boolean fastPath) {
+        if (finished.get()) return;
+        if (isUnlock() && !TemplateStore.validateAndRecordSuccess(this, settings)) {
+            finishFailure(false, "配置已变更或无法保存，请重新亮屏识别"); return;
         }
+        if (!finished.compareAndSet(false, true)) return;
+        publishSuccess(score, fastPath);
+    }
+
+    private void publishSuccess(float score, boolean fastPath) {
         long now = SystemClock.elapsedRealtime();
-        frameStartedAt = now;
-        // Use sensor capture time for voting, so a delayed/repeated result cannot create
-        // extra temporal evidence. Never compare this clock's epoch with elapsedRealtime.
-        frameCapturedAtMs = image.getImageInfo().getTimestamp() / 1_000_000L;
-        if (firstFrameAt == 0L) {
-            firstFrameAt = now;
-        }
-        processedFrameCount++;
-        try {
-            detector.process(inputImage)
-                .addOnSuccessListener(analyzerExecutor, faces -> {
-                    try {
-                        if (SystemClock.elapsedRealtime() - frameStartedAt > MAX_ANALYSIS_AGE_MS) {
-                            resetFaceTracking();
-                            return;
-                        }
-                        processFaces(image, rotation, faces);
-                    } catch (Throwable error) {
-                        android.util.Log.e(TAG, "Unable to analyze camera frame", error);
-                        resetFaceTracking();
-                        updateDetail("人脸检测暂时不可用");
-                    }
-                })
-                .addOnFailureListener(analyzerExecutor, error -> {
-                    resetFaceTracking();
-                    updateDetail("人脸检测暂时不可用");
-                })
-                .addOnCompleteListener(analyzerExecutor, task -> completeFrame(image));
-        } catch (RuntimeException error) {
-            resetFaceTracking();
-            android.util.Log.w(TAG, "Face detector rejected camera frame", error);
-            completeFrame(image);
-        }
-    }
-
-    private void completeFrame(ImageProxy image) {
-        image.close();
-        processing.set(false);
-        if (resourceReleaseRequested.get()) {
-            releaseAnalyzerResources();
-        }
-    }
-
-    private void processFaces(ImageProxy frame, int rotationDegrees, List<Face> faces) {
-        if (finished.get()) {
-            return;
-        }
-        if (faces.size() != 1) {
-            rejectRecognitionFrame();
-            updateDetail(faces.isEmpty() ? "未检测到人脸" : "画面中只能有一张人脸");
-            return;
-        }
-
-        int normalizedRotation = ((rotationDegrees % 360) + 360) % 360;
-        int uprightWidth = normalizedRotation == 90 || normalizedRotation == 270
-                ? frame.getHeight() : frame.getWidth();
-        int uprightHeight = normalizedRotation == 90 || normalizedRotation == 270
-                ? frame.getWidth() : frame.getHeight();
-        Face face = faces.get(0);
-        Rect detectedBox = face.getBoundingBox();
-        float widthRatio = detectedBox.width() / (float) Math.max(1, uprightWidth);
-        lastFaceWidthRatio = widthRatio;
-        if (widthRatio < MIN_FACE_WIDTH_RATIO) {
-            rejectRecognitionFrame();
-            updateDetail("请靠近一点");
-            return;
-        }
-        float centerXOffset = Math.abs(detectedBox.exactCenterX() - uprightWidth * 0.5f)
-                / Math.max(1f, uprightWidth);
-        float centerYOffset = Math.abs(detectedBox.exactCenterY() - uprightHeight * 0.5f)
-                / Math.max(1f, uprightHeight);
-        lastCenterOffsetX = centerXOffset;
-        lastCenterOffsetY = centerYOffset;
-        if (centerXOffset > MAX_CENTER_OFFSET_X_RATIO
-                || centerYOffset > MAX_CENTER_OFFSET_Y_RATIO) {
-            rejectRecognitionFrame();
-            updateDetail("请将脸移到画面中央");
-            return;
-        }
-
-        updateEyeState(face);
-        if (!eyesCurrentlyOpen) {
-            rejectRecognitionFrame();
-            updateDetail("请自然睁眼并看向屏幕");
-            logDiagnostic(Float.MAX_VALUE, Float.MAX_VALUE, false, "eyes");
-            return;
-        }
-        if (!isWithinHardPose(face)) {
-            rejectRecognitionFrame();
-            updateDetail("请自然正视屏幕");
-            logDiagnostic(Float.MAX_VALUE, Float.MAX_VALUE, false, "pose");
-            return;
-        }
-
-        Rect box = paddedAndClamped(detectedBox, uprightWidth, uprightHeight);
-        if (box.width() < 100 || box.height() < 100) {
-            rejectRecognitionFrame();
-            updateDetail("请靠近一点");
-            return;
-        }
-        PointF leftEye = landmarkPosition(face, FaceLandmark.LEFT_EYE);
-        PointF rightEye = landmarkPosition(face, FaceLandmark.RIGHT_EYE);
-        PointF nose = landmarkPosition(face, FaceLandmark.NOSE_BASE);
-        PointF mouthLeft = landmarkPosition(face, FaceLandmark.MOUTH_LEFT);
-        PointF mouthRight = landmarkPosition(face, FaceLandmark.MOUTH_RIGHT);
-        PointF mouthBottom = landmarkPosition(face, FaceLandmark.MOUTH_BOTTOM);
-        if (leftEye == null || rightEye == null || nose == null || mouthLeft == null
-                || mouthRight == null || mouthBottom == null) {
-            rejectRecognitionFrame();
-            updateDetail("请让完整面部正对屏幕");
-            return;
-        }
-        float[] geometry = FaceGeometry.create(detectedBox.width(), detectedBox.height(),
-                leftEye.x, leftEye.y, rightEye.x, rightEye.y, nose.x, nose.y,
-                mouthLeft.x, mouthLeft.y, mouthRight.x, mouthRight.y,
-                mouthBottom.x, mouthBottom.y);
-        if (geometry == null) {
-            rejectRecognitionFrame();
-            updateDetail("请自然正视屏幕");
-            return;
-        }
-
-        float[] descriptor;
-        try {
-            descriptor = descriptorWorkspace.compute(frame, rotationDegrees, box,
-                    leftEye, rightEye);
-        } catch (RuntimeException error) {
-            rejectRecognitionFrame();
-            android.util.Log.w(TAG, "Unable to extract face descriptor", error);
-            return;
-        }
-        lastBrightness = descriptorWorkspace.getBrightness();
-        lastContrast = descriptorWorkspace.getContrast();
-        lastSharpness = descriptorWorkspace.getSharpness();
-        String qualityProblem = qualityProblem();
-        if (qualityProblem != null) {
-            rejectRecognitionFrame();
-            updateDetail(qualityProblem);
-            logDiagnostic(Float.MAX_VALUE, Float.MAX_VALUE, false, "quality");
-            return;
-        }
-
-        if (Constants.MODE_ENROLL.equals(mode)) {
-            // The workspace is reused on the next frame; enrollment samples must own their data.
-            processEnrollment(descriptor.clone(), geometry);
-        } else {
-            processRecognition(descriptor, geometry);
-        }
-    }
-
-    private void processEnrollment(float[] descriptor, float[] geometry) {
-        long now = SystemClock.elapsedRealtime();
-        if (now - lastEnrollmentCaptureAt < 280L) {
-            return;
-        }
-        if (Math.abs(lastYaw) > 18f || Math.abs(lastPitch) > 16f
-                || Math.abs(lastRoll) > 18f) {
-            updateInstruction("录入人脸：请自然正视镜头");
-            return;
-        }
-        enrollmentSamples.add(descriptor);
-        enrollmentGeometrySamples.add(geometry);
-        lastEnrollmentCaptureAt = now;
-        int count = enrollmentSamples.size();
-        updateInstruction("录入人脸：自然看向屏幕即可");
-        updateDetail("正在自动校准，已采集 " + count + "/" + ENROLLMENT_SAMPLES);
-        if (count >= ENROLLMENT_SAMPLES) {
-            IdentityModel enrolled = IdentityModel.enroll(enrollmentSamples,
-                    enrollmentGeometrySamples);
-            if (TemplateStore.saveIdentityModel(this, enrolled)) {
-                finishSuccess(enrolled.textureThreshold);
+        logOutcome("success");
+        // Release logs contain timings only, without identity/geometry or per-eye measurements.
+        android.util.Log.i("Pixel2DFace", "Capture completed mode=" + mode
+                + " path=" + (fastPath ? "fast" : "normal")
+                + " initMs=" + (engineReadyAt - createdAt) + " totalMs=" + (now - createdAt)
+                + " firstResultMs=" + sinceCreation(firstFrameAt)
+                + " firstFaceMs=" + sinceCreation(firstFaceAt)
+                + " firstQualityMs=" + sinceCreation(firstQualityAt)
+                + " firstMatchMs=" + sinceCreation(firstMatchAt)
+                + " confirmationMs=" + (firstMatchAt == 0 ? -1 : now - firstMatchAt)
+                + " frames=" + processedFrames);
+        main.post(() -> {
+            stopCapture();
+            if (isFinishing() || isDestroyed()) return;
+            Intent data = new Intent().putExtra(Constants.EXTRA_SCORE, score);
+            if (isUnlock()) {
+                PowerManager power = getSystemService(PowerManager.class);
+                KeyguardManager keyguard = getSystemService(KeyguardManager.class);
+                if (power == null || !power.isInteractive() || keyguard == null
+                        || !keyguard.isDeviceLocked()) { finishHost("inactive_after_success"); return; }
+                if (host != null) host.awaitKeyguardDismissal();
+                sendBroadcast(new Intent(Constants.ACTION_UNLOCK_RESULT).setPackage(Constants.SYSTEM_UI_PACKAGE)
+                        .putExtra(Constants.EXTRA_SESSION_TOKEN, sessionToken)
+                        .putExtra(Constants.EXTRA_SUCCESS, true).putExtra(Constants.EXTRA_SCORE, score)
+                        .putExtra(Constants.EXTRA_STORE_REVISION, settings.state.revision));
+                setResult(Activity.RESULT_OK, data);
             } else {
-                finishFailure(false, "保存人脸失败，请重试");
+                setResult(Activity.RESULT_OK, data); finish(); overridePendingTransition(0, 0);
             }
-        }
-    }
-
-    private void processRecognition(float[] descriptor, float[] geometry) {
-        float frameThreshold = Math.max(0.24f,
-                recognitionThreshold - posePenalty() - qualityPenalty() - framingPenalty());
-        IdentityModel.Match match = identityModel.compare(descriptor, geometry, frameThreshold);
-        float score = match.textureScore;
-        lastFrontScore = score;
-        lastGeometryScore = match.geometryScore;
-        lastGeometryPeak = match.geometryPeak;
-        lastConsistentCells = match.consistentCells;
-        lastConsistentCoreCells = match.consistentCoreCells;
-        bestScore = Math.min(bestScore, score);
-        boolean matched = match.accepted;
-        boolean highConfidence = match.isHighConfidence(frameThreshold,
-                identityModel.geometryThreshold)
-                && PassiveEyeGate.areConfidentlyOpen(lastLeftEyeProbability,
-                        lastRightEyeProbability, lastLeftEyeContourRatio, lastRightEyeContourRatio)
-                && posePenalty() == 0f && qualityPenalty() == 0f && framingPenalty() == 0f;
-        RecognitionStabilizer.Result result = recognitionStabilizer.add(
-                score, frameThreshold, recognitionThreshold, matched, highConfidence,
-                frameCapturedAtMs);
-        consecutiveMatches = result.matches;
-
-        if (detailView != null) {
-            String state = matched
-                    ? "正在确认 " + result.matches + "/" + REQUIRED_MATCHES
-                    : "纹理或脸型未匹配，请自然正视屏幕";
-            updateDetail(String.format(Locale.CHINA, "%s · 匹配 %.3f / %.3f",
-                    state, score, frameThreshold));
-        }
-        logDiagnostic(score, score, matched, "match");
-        if (result.confirmed) {
-            confirmedFastPath = result.fastPath;
-            finishSuccess(result.meanScore);
-        }
-    }
-
-    private void updateEyeState(Face face) {
-        Float left = face.getLeftEyeOpenProbability();
-        Float right = face.getRightEyeOpenProbability();
-        lastLeftEyeProbability = left;
-        lastRightEyeProbability = right;
-        lastLeftEyeContourRatio = eyeContourRatio(face, FaceContour.LEFT_EYE);
-        lastRightEyeContourRatio = eyeContourRatio(face, FaceContour.RIGHT_EYE);
-
-        boolean rawEyesOpen = PassiveEyeGate.areBothEyesOpen(left, right,
-                lastLeftEyeContourRatio, lastRightEyeContourRatio);
-        if (rawEyesOpen) {
-            consecutiveOpenEyeFrames++;
-        } else {
-            consecutiveOpenEyeFrames = 0;
-        }
-        // This is a passive quality check, not a blink challenge or spoof-proof liveness claim.
-        eyesCurrentlyOpen = rawEyesOpen;
-        lastYaw = face.getHeadEulerAngleY();
-        lastPitch = face.getHeadEulerAngleX();
-        lastRoll = face.getHeadEulerAngleZ();
-    }
-
-    private static float eyeContourRatio(Face face, int contourType) {
-        FaceContour contour = face.getContour(contourType);
-        if (contour == null || contour.getPoints().size() < 6) {
-            return 0f;
-        }
-        float minX = Float.MAX_VALUE;
-        float maxX = -Float.MAX_VALUE;
-        float minY = Float.MAX_VALUE;
-        float maxY = -Float.MAX_VALUE;
-        for (PointF point : contour.getPoints()) {
-            minX = Math.min(minX, point.x);
-            maxX = Math.max(maxX, point.x);
-            minY = Math.min(minY, point.y);
-            maxY = Math.max(maxY, point.y);
-        }
-        float width = maxX - minX;
-        return width <= 0f ? 0f : (maxY - minY) / width;
-    }
-
-    private static String probabilityText(Float value) {
-        return value == null ? "null" : String.format(Locale.US, "%.2f", value);
-    }
-
-    private static PointF landmarkPosition(Face face, int landmarkType) {
-        FaceLandmark landmark = face.getLandmark(landmarkType);
-        return landmark == null ? null : landmark.getPosition();
-    }
-
-    private boolean isWithinHardPose(Face face) {
-        return Math.abs(face.getHeadEulerAngleY()) <= MAX_ABS_YAW_DEGREES
-                && Math.abs(face.getHeadEulerAngleX()) <= MAX_ABS_PITCH_DEGREES
-                && Math.abs(face.getHeadEulerAngleZ()) <= MAX_ABS_ROLL_DEGREES;
-    }
-
-    private String qualityProblem() {
-        if (lastBrightness < MIN_BRIGHTNESS) {
-            return "光线太暗，请稍微提高屏幕亮度";
-        }
-        if (lastBrightness > MAX_BRIGHTNESS) {
-            return "画面过亮，请避开强光";
-        }
-        if (lastContrast < MIN_CONTRAST) {
-            return "面部光线不足，请面向屏幕";
-        }
-        if (lastSharpness < MIN_SHARPNESS) {
-            return "画面不够清晰，请保持手机稳定";
-        }
-        return null;
-    }
-
-    private float posePenalty() {
-        float penalty = scaledPenalty(Math.abs(lastYaw), 14f, MAX_ABS_YAW_DEGREES, 0.014f)
-                + scaledPenalty(Math.abs(lastPitch), 12f, MAX_ABS_PITCH_DEGREES, 0.010f)
-                + scaledPenalty(Math.abs(lastRoll), 12f, MAX_ABS_ROLL_DEGREES, 0.008f);
-        return Math.min(0.028f, penalty);
-    }
-
-    private float qualityPenalty() {
-        float penalty = 0f;
-        if (lastBrightness < 30f) {
-            penalty += scaledPenalty(30f - lastBrightness, 0f, 18f, 0.010f);
-        } else if (lastBrightness > 230f) {
-            penalty += scaledPenalty(lastBrightness - 230f, 0f, 18f, 0.010f);
-        }
-        if (lastContrast < 12f) {
-            penalty += scaledPenalty(12f - lastContrast, 0f, 6f, 0.012f);
-        }
-        if (lastSharpness < 3.2f) {
-            penalty += scaledPenalty(3.2f - lastSharpness, 0f, 1.7f, 0.012f);
-        }
-        return Math.min(0.026f, penalty);
-    }
-
-    private float framingPenalty() {
-        float penalty = 0f;
-        if (lastFaceWidthRatio < 0.24f) {
-            penalty += scaledPenalty(0.24f - lastFaceWidthRatio, 0f, 0.06f, 0.008f);
-        }
-        if (lastCenterOffsetX > 0.25f) {
-            penalty += scaledPenalty(lastCenterOffsetX - 0.25f, 0f, 0.09f, 0.006f);
-        }
-        if (lastCenterOffsetY > 0.27f) {
-            penalty += scaledPenalty(lastCenterOffsetY - 0.27f, 0f, 0.09f, 0.006f);
-        }
-        return Math.min(0.014f, penalty);
-    }
-
-    private static float scaledPenalty(float value, float freeLimit, float hardLimit,
-            float maximumPenalty) {
-        if (value <= freeLimit) {
-            return 0f;
-        }
-        float range = Math.max(0.0001f, hardLimit - freeLimit);
-        return Math.min(maximumPenalty,
-                (value - freeLimit) / range * maximumPenalty);
-    }
-
-    private void rejectRecognitionFrame() {
-        // A closed eye, missing/extra face, or invalid geometry/quality breaks continuity.
-        // Only ordinary texture mismatches may occupy a rejected slot in the short vote.
-        resetFaceTracking();
-    }
-
-    private void resetFaceTracking() {
-        consecutiveOpenEyeFrames = 0;
-        eyesCurrentlyOpen = false;
-        recognitionStabilizer.clear();
-        consecutiveMatches = 0;
-    }
-
-    private void logDiagnostic(float score, float frontScore, boolean matched, String stage) {
-        if (!BuildConfig.DEBUG && !android.util.Log.isLoggable(TAG, android.util.Log.DEBUG)) {
-            return;
-        }
-        long now = SystemClock.elapsedRealtime();
-        if (now - lastDiagnosticAt < 400L && consecutiveMatches < REQUIRED_MATCHES) {
-            return;
-        }
-        lastDiagnosticAt = now;
-        android.util.Log.d(TAG, String.format(Locale.US,
-                "Frame stage=%s matched=%s score=%.3f front=%.3f pose=%.1f/%.1f/%.1f"
-                        + " quality=%.1f/%.1f/%.1f eyes=%s/%s ratios=%.3f/%.3f"
-                        + " geometry=%.2f/%.2f cells=%d/%d frames=%d/%d",
-                stage, matched, score, frontScore, lastYaw, lastPitch, lastRoll,
-                lastBrightness, lastContrast, lastSharpness,
-                probabilityText(lastLeftEyeProbability),
-                probabilityText(lastRightEyeProbability),
-                lastLeftEyeContourRatio, lastRightEyeContourRatio,
-                lastGeometryScore, lastGeometryPeak,
-                lastConsistentCells, lastConsistentCoreCells,
-                consecutiveMatches, processedFrameCount));
-    }
-
-    private void handleTimeout() {
-        if (!finished.get()) {
-            finishFailure(Constants.MODE_UNLOCK.equals(mode), "识别超时");
-        }
-    }
-
-    private void finishSuccess(float score) {
-        if (!finished.compareAndSet(false, true)) {
-            return;
-        }
-        resourceReleaseRequested.set(true);
-        TemplateStore.recordSuccess(this);
-        long now = SystemClock.elapsedRealtime();
-        android.util.Log.i(TAG, "Recognition success, mode=" + mode
-                + ", distance=" + score
-                + ", frontDistance=" + lastFrontScore
-                + ", geometry=" + lastGeometryScore + "/" + lastGeometryPeak
-                + ", cells=" + lastConsistentCells + "/" + lastConsistentCoreCells
-                + ", leftEye=" + probabilityText(lastLeftEyeProbability)
-                + ", rightEye=" + probabilityText(lastRightEyeProbability)
-                + ", eyeRatio=" + lastLeftEyeContourRatio + "/" + lastRightEyeContourRatio
-                + ", stableOpen=" + consecutiveOpenEyeFrames
-                + ", eyesOpen=" + eyesCurrentlyOpen
-                + ", pose=" + lastYaw + "/" + lastPitch + "/" + lastRoll
-                + ", quality=" + lastBrightness + "/" + lastContrast + "/" + lastSharpness
-                + ", matches=" + consecutiveMatches + "/" + REQUIRED_MATCHES
-                + ", path=" + (confirmedFastPath ? "strong" : "normal")
-                + ", initMs=" + (engineReadyAt - captureCreatedAt)
-                + ", totalMs=" + (now - captureCreatedAt)
-                + ", sessionMs=" + (now - sessionStartedAt)
-                + ", cameraMs=" + (firstFrameAt == 0L ? -1L : now - firstFrameAt)
-                + ", processedFrames=" + processedFrameCount);
-        runOnUiThread(() -> {
-            stopCamera();
-            deliverSuccess(score);
         });
-    }
-
-    private void deliverSuccess(float score) {
-        if (isFinishing() || isDestroyed()) {
-            return;
-        }
-        if (Constants.MODE_UNLOCK.equals(mode)) {
-            android.os.PowerManager power = getSystemService(android.os.PowerManager.class);
-            KeyguardManager keyguard = getSystemService(KeyguardManager.class);
-            if (power == null || !power.isInteractive() || keyguard == null
-                    || !keyguard.isDeviceLocked()) {
-                finishHostWithoutTransition();
-                return;
-            }
-            Intent result = new Intent(Constants.ACTION_UNLOCK_RESULT)
-                    .setPackage(Constants.SYSTEM_UI_PACKAGE)
-                    .putExtra(Constants.EXTRA_SESSION_TOKEN, sessionToken)
-                    .putExtra(Constants.EXTRA_SUCCESS, true)
-                    .putExtra(Constants.EXTRA_SCORE, score);
-            sendBroadcast(result);
-            // Keep this 1x1, non-touchable host alive while keyguard is still visible. Its
-            // window is transparent, but finishing it here would make Android close the task,
-            // briefly reveal the background application, then rebuild the lock-screen state.
-            setResult(Activity.RESULT_OK, new Intent().putExtra(Constants.EXTRA_SCORE, score));
-            mainHandler.post(keyguardExitWatcher);
-            return;
-        }
-        Intent data = new Intent().putExtra(Constants.EXTRA_SCORE, score);
-        setResult(Activity.RESULT_OK, data);
-        finish();
-        overridePendingTransition(0, 0);
     }
 
     private void finishFailure(boolean recordFailure, String message) {
-        if (!finished.compareAndSet(false, true)) {
-            return;
-        }
-        resourceReleaseRequested.set(true);
-        if (recordFailure) {
-            TemplateStore.recordFailure(this);
-        }
-        android.util.Log.i(TAG, "Recognition finished without success, mode=" + mode
-                + ", reason=" + message + ", bestDistance=" + bestScore);
-        runOnUiThread(() -> {
-            stopCamera();
-            deliverFailure(message);
+        if (!finished.compareAndSet(false, true)) return;
+        if (recordFailure) StoreTasks.execute(() -> TemplateStore.tryRecordFailure(this));
+        publishFailure(message);
+    }
+
+    private void publishFailure(String message) {
+        logOutcome("failure: " + message);
+        main.post(() -> {
+            if (host != null) host.releaseLockScreen();
+            stopCapture();
+            if (isFinishing() || isDestroyed()) return;
+            if (isUnlock() && sessionToken != null) sendBroadcast(new Intent(Constants.ACTION_UNLOCK_RESULT)
+                    .setPackage(Constants.SYSTEM_UI_PACKAGE).putExtra(Constants.EXTRA_SESSION_TOKEN, sessionToken)
+                    .putExtra(Constants.EXTRA_SUCCESS, false));
+            setResult(Activity.RESULT_CANCELED, new Intent().putExtra(Constants.EXTRA_SCORE, bestScore)
+                    .putExtra("message", message));
+            if (host != null) host.close();
+            finish(); overridePendingTransition(0, 0);
         });
     }
 
-    private void deliverFailure(String message) {
-        if (Constants.MODE_UNLOCK.equals(mode) && sessionToken != null) {
-            Intent result = new Intent(Constants.ACTION_UNLOCK_RESULT)
-                    .setPackage(Constants.SYSTEM_UI_PACKAGE)
-                    .putExtra(Constants.EXTRA_SESSION_TOKEN, sessionToken)
-                    .putExtra(Constants.EXTRA_SUCCESS, false);
-            sendBroadcast(result);
-        }
-        Intent data = new Intent().putExtra(Constants.EXTRA_SCORE, bestScore)
-                .putExtra("message", message);
-        setResult(Activity.RESULT_CANCELED, data);
-        finish();
-        overridePendingTransition(0, 0);
+    private void stopCapture() {
+        main.removeCallbacksAndMessages(null);
+        if (recognition != null) recognition.endSession();
+        if (camera != null) camera.close();
     }
-
-    private void stopCamera() {
-        mainHandler.removeCallbacksAndMessages(null);
-        if (analysisUseCase != null) {
-            analysisUseCase.clearAnalyzer();
-            if (cameraProvider != null) {
-                cameraProvider.unbind(analysisUseCase);
-            }
-            analysisUseCase = null;
-        }
-        if (previewUseCase != null) {
-            if (cameraProvider != null) {
-                cameraProvider.unbind(previewUseCase);
-            }
-            previewUseCase = null;
-        }
+    private void finishHost() {
+        finishHost("host_dismissed");
     }
-
-    @Override
-    protected void onDestroy() {
+    private void finishHost(String reason) {
+        logOutcome(reason);
         finished.set(true);
-        resourceReleaseRequested.set(true);
-        mainHandler.removeCallbacks(keyguardExitWatcher);
-        if (screenOffReceiver != null) {
-            try {
-                unregisterReceiver(screenOffReceiver);
-            } catch (IllegalArgumentException ignored) {
-                // Receiver may already be gone during an abnormal Activity teardown.
-            }
-            screenOffReceiver = null;
-        }
-        stopCamera();
-        if (!processing.get()) {
-            releaseAnalyzerResources();
-        }
-        notifyCameraHostFinished();
+        if (host != null) host.close();
+        stopCapture();
+        if (!isFinishing()) { finish(); overridePendingTransition(0, 0); }
+    }
+    @Override protected void onStop() {
+        if (camera != null && !finished.get()) finishHost("activity_stopped");
+        super.onStop();
+    }
+    @Override protected void onDestroy() {
+        logOutcome("activity_destroyed");
+        finished.set(true); stopCapture();
+        if (host != null) host.close();
         super.onDestroy();
     }
 
-    private void releaseAnalyzerResources() {
-        if (!resourcesReleased.compareAndSet(false, true)) {
-            return;
-        }
-        synchronized (detectorLock) {
-            if (detector != null) {
-                detector.close();
-                detector = null;
+    /** Fixed reason names and timings only; never logs descriptors, scores or eye measurements. */
+    private void recordFrameOutcome(String reason) {
+        long now = SystemClock.elapsedRealtime();
+        synchronized (frameOutcomes) {
+            Integer count = frameOutcomes.get(reason);
+            frameOutcomes.put(reason, count == null ? 1 : count + 1);
+            if (isUnlock() && now - lastDiagnosticAt >= 2_000) {
+                lastDiagnosticAt = now;
+                android.util.Log.i("Pixel2DFace", "Capture progress elapsedMs="
+                        + (now - createdAt) + " outcomes=" + frameOutcomes);
             }
         }
-        analyzerExecutor.shutdown();
     }
 
-    private void registerScreenOffReceiver() {
-        screenOffReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
-                    finished.set(true);
-                    finishHostWithoutTransition();
-                } else if (Intent.ACTION_USER_PRESENT.equals(intent.getAction())) {
-                    finishHostWithoutTransition();
-                }
-            }
-        };
-        IntentFilter filter = new IntentFilter(Intent.ACTION_SCREEN_OFF);
-        filter.addAction(Intent.ACTION_USER_PRESENT);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(screenOffReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(screenOffReceiver, filter);
+    private void logOutcome(String outcome) {
+        if (!outcomeLogged.compareAndSet(false, true)) return;
+        synchronized (frameOutcomes) {
+            android.util.Log.i("Pixel2DFace", "Capture ended mode=" + mode + " outcome="
+                    + outcome + " elapsedMs=" + (SystemClock.elapsedRealtime() - createdAt)
+                    + " firstResultMs=" + sinceCreation(firstFrameAt)
+                    + " firstFaceMs=" + sinceCreation(firstFaceAt)
+                    + " firstQualityMs=" + sinceCreation(firstQualityAt)
+                    + " firstMatchMs=" + sinceCreation(firstMatchAt)
+                    + " outcomes=" + frameOutcomes);
         }
     }
 
-    private void finishHostWithoutTransition() {
-        finished.set(true);
-        resourceReleaseRequested.set(true);
-        if (!isFinishing()) {
-            finish();
-            overridePendingTransition(0, 0);
-        }
+    private long sinceCreation(long timestamp) {
+        return timestamp == 0 ? -1 : timestamp - createdAt;
     }
 
-    private void notifyCameraHostFinished() {
-        if (!Constants.MODE_UNLOCK.equals(mode) || sessionToken == null
-                || !hostFinishedBroadcastSent.compareAndSet(false, true)) {
-            return;
-        }
-        Intent finishedIntent = new Intent(Constants.ACTION_CAMERA_HOST_FINISHED)
-                .setPackage(Constants.SYSTEM_UI_PACKAGE)
-                .putExtra(Constants.EXTRA_SESSION_TOKEN, sessionToken);
-        sendBroadcast(finishedIntent);
+    private void showInstruction(String message) {
+        if (content != null) main.post(() -> {
+            if (!finished.get() && !isDestroyed()) content.showInstruction(message);
+        });
     }
-
-    @Override
-    public void onBackPressed() {
-        finishFailure(false, "已取消");
-        super.onBackPressed();
-    }
-
-    private Rect paddedAndClamped(Rect source, int width, int height) {
-        int padX = Math.round(source.width() * 0.16f);
-        int padTop = Math.round(source.height() * 0.20f);
-        int padBottom = Math.round(source.height() * 0.10f);
-        int left = Math.max(0, source.left - padX);
-        int top = Math.max(0, source.top - padTop);
-        int right = Math.min(width, source.right + padX);
-        int bottom = Math.min(height, source.bottom + padBottom);
-        return new Rect(left, top, right, bottom);
-    }
-
-    private void updateInstruction(String value) {
-        if (instructionView != null) {
-            runOnUiThread(() -> instructionView.setText(value));
-        }
-    }
-
-    private void updateDetail(String value) {
-        if (detailView != null) {
-            runOnUiThread(() -> detailView.setText(value));
-        }
-    }
-
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
-    }
-
-    private static final class FaceGuideView extends View {
-        private final Paint shade = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint border = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final RectF oval = new RectF();
-        private final android.graphics.PorterDuffXfermode clearXfermode =
-                new android.graphics.PorterDuffXfermode(
-                        android.graphics.PorterDuff.Mode.CLEAR);
-
-        FaceGuideView(android.content.Context context) {
-            super(context);
-            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
-            shade.setColor(Color.argb(72, 0, 0, 0));
-            border.setColor(Color.argb(230, 255, 255, 255));
-            border.setStyle(Paint.Style.STROKE);
-            border.setStrokeWidth(context.getResources().getDisplayMetrics().density * 3f);
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            float width = getWidth() * 0.68f;
-            float height = width * 1.28f;
-            float left = (getWidth() - width) / 2f;
-            float top = (getHeight() - height) / 2f;
-            oval.set(left, top, left + width, top + height);
-            canvas.drawColor(shade.getColor());
-            shade.setXfermode(clearXfermode);
-            canvas.drawOval(oval, shade);
-            shade.setXfermode(null);
-            canvas.drawOval(oval, border);
-        }
+    private void showDetail(String message) {
+        if (content == null) return;
+        long now = SystemClock.elapsedRealtime();
+        if (now - lastUiUpdateAt < 120) return;
+        lastUiUpdateAt = now;
+        main.post(() -> { if (!finished.get() && !isDestroyed()) content.showDetail(message); });
     }
 }

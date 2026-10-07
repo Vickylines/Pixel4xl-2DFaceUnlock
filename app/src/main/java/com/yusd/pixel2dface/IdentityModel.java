@@ -25,6 +25,13 @@ final class IdentityModel {
     final float[] geometryScales;
     final float textureThreshold;
     final float geometryThreshold;
+    // These legacy package fields are serialization snapshots. Matching owns separate arrays,
+    // so a caller cannot change the enrolled identity after constructor validation.
+    private final float[] matchingTexture;
+    private final float[] matchingWeights;
+    private final float[] matchingLimits;
+    private final float[] matchingGeometry;
+    private final float[] matchingScales;
     private final double weightSum;
 
     IdentityModel(float[] textureCentroid, float[] cellWeights, float[] cellLimits,
@@ -63,6 +70,11 @@ final class IdentityModel {
         this.cellLimits = cellLimits.clone();
         this.geometryCentroid = geometryCentroid.clone();
         this.geometryScales = geometryScales.clone();
+        matchingTexture = this.textureCentroid.clone();
+        matchingWeights = this.cellWeights.clone();
+        matchingLimits = this.cellLimits.clone();
+        matchingGeometry = this.geometryCentroid.clone();
+        matchingScales = this.geometryScales.clone();
         this.textureThreshold = textureThreshold;
         this.geometryThreshold = geometryThreshold;
         double sum = 0d;
@@ -73,8 +85,14 @@ final class IdentityModel {
     }
 
     static IdentityModel enroll(List<float[]> textures, List<float[]> geometries) {
-        if (textures.size() < 6 || textures.size() != geometries.size()) {
+        if (textures == null || geometries == null || textures.size() < 6
+                || textures.size() != geometries.size()) {
             throw new IllegalArgumentException("Insufficient paired enrollment samples");
+        }
+        for (int i = 0; i < textures.size(); i++) {
+            if (!validLiveInputs(textures.get(i), geometries.get(i))) {
+                throw new IllegalArgumentException("Invalid paired enrollment sample");
+            }
         }
         float[] textureCentroid = LbpDescriptor.mean(textures);
         float[] geometryCentroid = mean(geometries, FaceGeometry.LENGTH);
@@ -130,9 +148,13 @@ final class IdentityModel {
     }
 
     Match compare(float[] texture, float[] geometry, float activeTextureThreshold) {
-        if (texture == null || texture.length != LbpDescriptor.LENGTH
-                || geometry == null || geometry.length != FaceGeometry.LENGTH
-                || !Float.isFinite(activeTextureThreshold) || activeTextureThreshold <= 0f
+        if (!validLiveInputs(texture, geometry)) return Match.rejected();
+        return compareValidated(texture, geometry, activeTextureThreshold);
+    }
+
+    /** Engine already checked histogram mass and geometry before advancing any evidence. */
+    Match compareValidated(float[] texture, float[] geometry, float activeTextureThreshold) {
+        if (!Float.isFinite(activeTextureThreshold) || activeTextureThreshold <= 0f
                 || activeTextureThreshold > textureThreshold) {
             return Match.rejected();
         }
@@ -140,12 +162,12 @@ final class IdentityModel {
         int consistentCells = 0;
         int consistentCoreCells = 0;
         for (int cell = 0; cell < CELL_COUNT; cell++) {
-            float distance = cellDistance(texture, textureCentroid, cell);
-            weightedSum += distance * cellWeights[cell];
+            float distance = cellDistance(texture, matchingTexture, cell);
+            weightedSum += distance * matchingWeights[cell];
             int row = cell / GRID;
             int column = cell % GRID;
             boolean core = row >= 1 && row <= 5 && column >= 1 && column <= 5;
-            float activeCellLimit = Math.max(cellLimits[cell], activeTextureThreshold * 1.45f);
+            float activeCellLimit = Math.max(matchingLimits[cell], activeTextureThreshold * 1.45f);
             if (distance <= activeCellLimit) {
                 consistentCells++;
                 if (core) {
@@ -154,7 +176,7 @@ final class IdentityModel {
             }
         }
         float textureScore = (float) (weightedSum / weightSum);
-        GeometryScore geometryScore = geometryScore(geometry, geometryCentroid, geometryScales);
+        GeometryScore geometryScore = geometryScore(geometry, matchingGeometry, matchingScales);
         boolean accepted = textureScore <= activeTextureThreshold
                 && consistentCells >= MIN_CONSISTENT_CELLS
                 && consistentCoreCells >= MIN_CONSISTENT_CORE_CELLS
@@ -164,15 +186,28 @@ final class IdentityModel {
                 consistentCells, consistentCoreCells, accepted);
     }
 
+    static boolean validLiveInputs(float[] texture, float[] geometry) {
+        if (texture == null || texture.length != LbpDescriptor.LENGTH
+                || !FaceGeometry.isValid(geometry)) return false;
+        for (int cell = 0; cell < CELL_COUNT; cell++) {
+            double mass = 0d;
+            int end = (cell + 1) * BINS;
+            for (int bin = cell * BINS; bin < end; bin++) {
+                float value = texture[bin];
+                if (!Float.isFinite(value) || value < 0f || value > 1f) return false;
+                mass += value;
+            }
+            if (Math.abs(mass - 1d) > 0.02d) return false;
+        }
+        return true;
+    }
+
     private static float cellDistance(float[] first, float[] second, int cell) {
         int offset = cell * BINS;
         double sum = 0d;
         for (int bin = 0; bin < BINS; bin++) {
             double a = first[offset + bin];
             double b = second[offset + bin];
-            if (!Double.isFinite(a) || a < 0d || a > 1d) {
-                return Float.MAX_VALUE;
-            }
             double delta = a - b;
             sum += (delta * delta) / (a + b + 1e-8d);
         }
@@ -264,7 +299,12 @@ final class IdentityModel {
         boolean isHighConfidence(float activeThreshold, float geometryThreshold) {
             // Extra margins are only for saving the fifth observation. Normal matching
             // still requires all original texture, geometry, and regional checks.
-            return accepted && textureScore <= activeThreshold - 0.05f
+            return accepted && Float.isFinite(activeThreshold) && activeThreshold > 0f
+                    && Float.isFinite(geometryThreshold) && geometryThreshold > 0f
+                    && Float.isFinite(textureScore) && textureScore >= 0f
+                    && Float.isFinite(geometryScore) && geometryScore >= 0f
+                    && Float.isFinite(geometryPeak) && geometryPeak >= 0f
+                    && textureScore <= activeThreshold - 0.05f
                     && geometryScore <= Math.min(0.75f, geometryThreshold * 0.55f)
                     && geometryPeak <= 1.8f && consistentCells >= 44
                     && consistentCoreCells >= 24;

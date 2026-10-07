@@ -1,4 +1,4 @@
-Pixel 2D 人脸解锁 v0.8.1——安装与使用说明
+Pixel 2D 人脸解锁 v0.9.3-refactor——安装与使用说明
 ==================================================
 
 一、适用范围
@@ -24,7 +24,7 @@ Android 16 已在 Pixel 4 XL（coral）+ LineageOS 23.2 上完成真机验证；
 注意：刷入 Root、Magisk 或 LSPosed 都存在开机异常风险。不同 Android 版本需要使用与当前系统匹配的 Magisk/LSPosed 版本，不要直接照搬其他机型的 boot 镜像。
 
 
-三、安装 LSPosed 框架（你可选择我这一版v2.0.1，7639，或者下载最新版本，项目地址：https://github.com/KernelSU-Modules-Repo/zygisk_lsposed/releases）
+三、安装 LSPosed 框架
 
 以下步骤适用于基于 Zygisk 的 LSPosed：
 
@@ -47,10 +47,12 @@ Android 16 已在 Pixel 4 XL（coral）+ LineageOS 23.2 上完成真机验证；
 
 四、安装 Pixel 2D 人脸解锁 APK
 
-从 0.8.0 升级到 0.8.1 保留 v3 模板，无需重新录入。本版关闭调试入口，仍沿用原安装签名。
+从 0.8.x / 0.9.x 升级保留有效 v3 模板，无需重新录入。本版不可调试，仍沿用原安装签名。
+下载地址：https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.9.3
+请使用 Release 中的安装包；GitHub Actions 的 CI 安装包使用不同证书，不能直接覆盖已有安装。
 
 安装文件：
-Pixel2DFaceUnlock-coral-0.8.1-safety-speed.apk
+Pixel2DFaceUnlock-coral-0.9.3-refactor.apk
 
 1. 在手机文件管理器中找到上述 APK。
 2. 允许当前文件管理器“安装未知应用”。
@@ -100,7 +102,7 @@ Pixel2DFaceUnlock-coral-0.8.1-safety-speed.apk
 4. 保持脸部处于画面中央，避免过暗、强逆光、口罩或严重遮挡。
 5. 按应用提示完成录入。
 6. 建议在日常使用的室内光线下录入清晰、正面的脸部数据。
-7. 0.8.0 使用 v3 双信号模板，同时校验 49 区局部纹理和眼鼻嘴几何比例；从 0.7.x 或更早版本升级后必须重新录入一次。
+7. 当前使用 v3 双信号模板，同时校验 49 区局部纹理和眼鼻嘴几何比例；有效 0.8.x / 0.9.x 模板可继续使用，从 0.7.x 或更早版本升级后必须重新录入一次。
 8. 录入完成后可以先使用应用内测试功能检查识别效果。
 
 
@@ -119,6 +121,8 @@ Pixel2DFaceUnlock-coral-0.8.1-safety-speed.apk
 
 4. 以下情况必须输入 PIN、密码或图案：
    手机刚刚重启；系统进入锁定模式；系统要求强认证；弱生物识别超时；模块未加载；相机不可用；识别未通过。
+
+5. 持续闭眼约 1.5 秒会结束本轮识别，普通眨眼不会累计为持续闭眼。失败或超时后仍可操作原生密码界面；需要重试时，息屏再亮屏，自然睁眼看向屏幕。
 
 
 九、UI 设置
@@ -142,7 +146,7 @@ Pixel2DFaceUnlock-coral-0.8.1-safety-speed.apk
 处理：这是预期逻辑。普通锁屏识别通过后还需要向上滑动；只有已经进入 PIN/密码页面时才会直接解锁。
 
 问题 4：识别速度慢或经常失败。
-处理：先使用“均衡”，清洁前置摄像头并在日常光线下重新录入。普通匹配使用 6 帧短时窗口，最近两帧必须匹配；闭眼、丢脸或画质硬门槛失败会清空旧票。
+处理：先确认模块状态和相机权限，清洁前置摄像头，在正常室内光线下自然正视屏幕，先使用“均衡”。已有有效 v3 模板不需要因升级重新录入；只有持续无法匹配时再考虑在日常光线下重录。普通匹配使用 6 帧短时窗口，最近两帧必须匹配；闭眼、丢脸或画质硬门槛失败会清空旧票。光线、姿态和首次匹配仍会影响速度。
 
 问题 5：更新 APK 后模块突然没有效果。
 处理：覆盖安装后重启 SystemUI 或完整重启手机，让 LSPosed 对新 APK 重新加载；不要先卸载旧版，否则人脸模板会被删除。
@@ -186,5 +190,5 @@ Pixel2DFaceUnlock-coral-0.8.1-safety-speed.apk
 
 当前安装包校验
 
-文件名：Pixel2DFaceUnlock-coral-0.8.1-safety-speed.apk
-SHA-256：5B52D0B1E76E510A5314089B2DCE698D245413957A5F4DA13421E8724FDEABE5
+文件名：Pixel2DFaceUnlock-coral-0.9.3-refactor.apk
+SHA-256：1f67d1eb27b57887081ac7cbcbfddfb1b1013b7b5e2229b1b67d4e66ec9c120b

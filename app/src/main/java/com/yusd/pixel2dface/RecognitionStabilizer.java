@@ -1,7 +1,5 @@
 package com.yusd.pixel2dface;
 
-import java.util.ArrayDeque;
-
 /** Short, monotonic-time votes. Hard quality/eye/face failures must call clear(). */
 final class RecognitionStabilizer {
     static final int WINDOW_SIZE = 6;
@@ -15,33 +13,65 @@ final class RecognitionStabilizer {
     private static final float MAX_ACCEPTED_SPREAD = 0.055f;
     private static final float MEAN_SAFETY_MARGIN = 0.004f;
 
-    private final ArrayDeque<Observation> observations = new ArrayDeque<>(WINDOW_SIZE);
+    // Fixed primitive ring: the camera hot path never allocates an Observation per frame.
+    private final float[] scores = new float[WINDOW_SIZE];
+    private final boolean[] accepted = new boolean[WINDOW_SIZE];
+    private final boolean[] strong = new boolean[WINDOW_SIZE];
+    private final long[] times = new long[WINDOW_SIZE];
+    private int first;
+    private int size;
+    private long latestTime = -1L;
+    private float lastBaseThreshold = Float.NaN;
 
     Result add(float score, float frameThreshold, float baseThreshold,
             boolean secondaryChecksPassed, boolean highConfidence, long now) {
-        Observation previous = observations.peekLast();
-        if (now < 0L || (previous != null && now <= previous.time)) {
+        if (now < 0L || now <= latestTime) {
             clear();
-            return evaluate(baseThreshold);
+            return Result.empty();
         }
-        if (previous != null && now - previous.time > MAX_FRAME_GAP_MS) {
+        boolean gap = hasGap(now);
+        latestTime = now;
+        if (!Float.isFinite(score) || score < 0f || !validThreshold(frameThreshold)
+                || !validThreshold(baseThreshold)) {
             clear();
+            return Result.empty();
         }
-        while (!observations.isEmpty() && now - observations.peekFirst().time > MAX_WINDOW_MS) {
-            observations.removeFirst();
+        if (gap || Float.compare(lastBaseThreshold, baseThreshold) != 0) clear();
+        lastBaseThreshold = baseThreshold;
+        while (size > 0 && now - times[first] > MAX_WINDOW_MS) {
+            removeFirst();
         }
-        boolean accepted = secondaryChecksPassed && Float.isFinite(score) && score >= 0f
-                && validThreshold(frameThreshold) && validThreshold(baseThreshold)
+        boolean matched = secondaryChecksPassed
                 && score <= Math.min(frameThreshold, baseThreshold);
-        observations.addLast(new Observation(score, accepted, accepted && highConfidence, now));
-        while (observations.size() > WINDOW_SIZE) {
-            observations.removeFirst();
-        }
+        if (size == WINDOW_SIZE) removeFirst();
+        int index = (first + size) % WINDOW_SIZE;
+        scores[index] = score;
+        accepted[index] = matched;
+        strong[index] = matched && highConfidence;
+        times[index] = now;
+        size++;
         return evaluate(baseThreshold);
     }
 
     void clear() {
-        observations.clear();
+        first = 0;
+        size = 0;
+    }
+
+    /** Only an explicitly new session may reset the monotonic timestamp watermark. */
+    void reset() {
+        clear();
+        latestTime = -1L;
+        lastBaseThreshold = Float.NaN;
+    }
+
+    boolean hasGap(long now) {
+        return latestTime >= 0L && now > latestTime && now - latestTime > MAX_FRAME_GAP_MS;
+    }
+
+    private void removeFirst() {
+        first = (first + 1) % WINDOW_SIZE;
+        size--;
     }
 
     private Result evaluate(float baseThreshold) {
@@ -53,40 +83,41 @@ final class RecognitionStabilizer {
         float minimum = Float.MAX_VALUE;
         float maximum = -Float.MAX_VALUE;
         float sum = 0f;
-        for (Observation observation : observations) {
-            consecutive = observation.accepted ? consecutive + 1 : 0;
-            if (observation.highConfidence) {
+        for (int offset = 0; offset < size; offset++) {
+            int index = (first + offset) % WINDOW_SIZE;
+            consecutive = accepted[index] ? consecutive + 1 : 0;
+            if (strong[index]) {
                 if (consecutiveStrong == 0) {
-                    strongStartedAt = observation.time;
+                    strongStartedAt = times[index];
                 }
                 consecutiveStrong++;
             } else {
                 consecutiveStrong = 0;
                 strongStartedAt = -1L;
             }
-            if (!observation.accepted) {
+            if (!accepted[index]) {
                 continue;
             }
             if (firstAcceptedAt < 0L) {
-                firstAcceptedAt = observation.time;
+                firstAcceptedAt = times[index];
             }
             matches++;
-            minimum = Math.min(minimum, observation.score);
-            maximum = Math.max(maximum, observation.score);
-            sum += observation.score;
+            minimum = Math.min(minimum, scores[index]);
+            maximum = Math.max(maximum, scores[index]);
+            sum += scores[index];
         }
         float mean = matches == 0 ? Float.MAX_VALUE : sum / matches;
         boolean stable = matches > 0 && maximum - minimum <= MAX_ACCEPTED_SPREAD;
-        long lastAt = observations.isEmpty() ? 0L : observations.peekLast().time;
+        long lastAt = size == 0 ? 0L : times[(first + size - 1) % WINDOW_SIZE];
         boolean fast = consecutiveStrong >= REQUIRED_MATCHES
                 && lastAt - strongStartedAt >= MIN_EVIDENCE_MS
                 && maximum - minimum <= 0.035f;
-        boolean ordinary = observations.size() >= MIN_OBSERVATIONS
+        boolean ordinary = size >= MIN_OBSERVATIONS
                 && matches >= REQUIRED_MATCHES && consecutive >= 2
                 && firstAcceptedAt >= 0L && lastAt - firstAcceptedAt >= MIN_EVIDENCE_MS;
         boolean confirmed = (ordinary || fast) && stable && validThreshold(baseThreshold)
                 && mean <= baseThreshold - MEAN_SAFETY_MARGIN;
-        return new Result(observations.size(), matches, mean, stable, confirmed,
+        return new Result(size, matches, mean, stable, confirmed,
                 confirmed && fast);
     }
 
@@ -111,19 +142,9 @@ final class RecognitionStabilizer {
             this.confirmed = confirmed;
             this.fastPath = fastPath;
         }
-    }
 
-    private static final class Observation {
-        final float score;
-        final boolean accepted;
-        final boolean highConfidence;
-        final long time;
-
-        Observation(float score, boolean accepted, boolean highConfidence, long time) {
-            this.score = score;
-            this.accepted = accepted;
-            this.highConfidence = highConfidence;
-            this.time = time;
+        static Result empty() {
+            return new Result(0, 0, Float.MAX_VALUE, false, false, false);
         }
     }
 }

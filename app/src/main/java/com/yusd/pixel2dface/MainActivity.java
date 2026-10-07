@@ -19,6 +19,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.util.Locale;
+import java.util.function.BooleanSupplier;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_ENROLL = 100;
@@ -28,6 +29,7 @@ public final class MainActivity extends Activity {
     private Switch enabledSwitch;
     private Button enrollButton;
     private Button testButton;
+    private Button deleteButton;
     private Button faceIdStyleButton;
     private Button islandStyleButton;
     private TextView animationStyleSummary;
@@ -35,6 +37,11 @@ public final class MainActivity extends Activity {
     private Button balancedRecognitionButton;
     private Button comfortRecognitionButton;
     private TextView recognitionProfileSummary;
+    private TemplateStore.StateSnapshot displayedState;
+    private boolean rendering;
+    private boolean saving;
+    private boolean resumed;
+    private int refreshGeneration;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -46,7 +53,14 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        resumed = true;
         refreshState();
+    }
+
+    @Override protected void onPause() {
+        resumed = false;
+        refreshGeneration++;
+        super.onPause();
     }
 
     private View buildContent() {
@@ -77,9 +91,9 @@ public final class MainActivity extends Activity {
         warning.addView(text("这是普通前置摄像头的弱生物识别。照片或视频仍可能绕过，"
                         + "仅用于日常锁屏解锁，不用于支付、银行或密码管理器。",
                 14, Color.rgb(95, 64, 20)), margins(0, 6, 0, 0));
-        warning.addView(text("适配目标为 Google Pixel 上的 Pixel/AOSP/LineageOS 类 SystemUI，"
-                        + "Android 10–16 使用运行时探测；0.5.1 仅有当前设备真机基线，"
-                        + "此 0.6.0 包及其他版本仍需逐机回归。",
+        warning.addView(text("当前版本 " + BuildConfig.VERSION_NAME
+                        + "。适配目标为 Google Pixel 上的 AOSP/LineageOS 类 SystemUI，"
+                        + "Android 10–16 使用运行时探测，未知适配会安全停用。",
                 13, Color.rgb(110, 72, 20)), margins(0, 7, 0, 0));
         warning.setBackground(rounded(Color.rgb(255, 244, 219), 16));
         root.addView(warning, margins(0, 0, 0, 14));
@@ -92,13 +106,14 @@ public final class MainActivity extends Activity {
         enabledSwitch.setTextSize(16);
         enabledSwitch.setPadding(0, dp(12), 0, 0);
         enabledSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
-            if (buttonView.isPressed()) {
-                if (checked && !TemplateStore.isEnrolled(this)) {
+            if (!rendering && !saving) {
+                if (checked && (displayedState == null || !displayedState.enrolled)) {
                     Toast.makeText(this, "请先录入人脸", Toast.LENGTH_SHORT).show();
+                    rendering = true;
                     buttonView.setChecked(false);
+                    rendering = false;
                 } else {
-                    TemplateStore.setEnabled(this, checked);
-                    refreshState();
+                    saveSetting(() -> TemplateStore.trySetEnabled(this, checked), null);
                 }
             }
         });
@@ -145,15 +160,14 @@ public final class MainActivity extends Activity {
         testButton.setOnClickListener(v -> startCapture(Constants.MODE_TEST, REQUEST_TEST));
         actions.addView(testButton, margins(0, 0, 0, 8));
 
-        Button deleteButton = button("删除人脸数据");
+        deleteButton = button("删除人脸数据");
         deleteButton.setTextColor(Color.rgb(180, 35, 45));
         deleteButton.setOnClickListener(v -> new AlertDialog.Builder(this)
                 .setTitle("删除人脸数据？")
                 .setMessage("删除后锁屏人脸解锁会立即停用。")
                 .setNegativeButton("取消", null)
                 .setPositiveButton("删除", (dialog, which) -> {
-                    TemplateStore.clearTemplates(this);
-                    refreshState();
+                    saveSetting(() -> TemplateStore.tryClearTemplates(this), "人脸数据已删除");
                 })
                 .show());
         actions.addView(deleteButton);
@@ -168,7 +182,7 @@ public final class MainActivity extends Activity {
         passiveTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         options.addView(passiveTitle, margins(0, 14, 0, 4));
         options.addView(text("解锁时只需自然看向屏幕，不要求眨眼或转头。新版会按眼位对齐人脸，"
-                        + "并在 6 帧窗口内要求至少 4 帧身份一致；偶发坏帧不再清空进度。",
+                        + "并用有时限的多帧确认身份。闭眼、丢脸或画质失效会立即清空识别进度。",
                 13, Color.rgb(92, 103, 115)));
 
         TextView profileTitle = text("安全偏好", 15, Color.rgb(45, 55, 65));
@@ -212,18 +226,36 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshState() {
-        boolean enrolled = TemplateStore.isEnrolled(this);
-        boolean legacyTemplates = TemplateStore.hasLegacyTemplates(this);
-        boolean enabled = TemplateStore.isEnabled(this);
-        long heartbeat = TemplateStore.getHookHeartbeat(this);
-        boolean hookSeen = System.currentTimeMillis() - heartbeat < 24L * 60L * 60L * 1000L;
-        String compatibility = TemplateStore.getHookCompatibility(this);
-        statusView.setText((hookSeen ? "● LSPosed 钩子已加载" : "○ 等待 LSPosed 加载")
+        final int request = ++refreshGeneration;
+        setControlsEnabled(false);
+        StoreTasks.execute(() -> {
+            TemplateStore.StateSnapshot state = TemplateStore.readState(this);
+            long heartbeat = TemplateStore.getHookHeartbeat(this);
+            String compatibility = TemplateStore.getHookCompatibility(this);
+            runOnUiThread(() -> {
+                if (!resumed || isFinishing() || isDestroyed() || request != refreshGeneration) return;
+                displayedState = state;
+                renderState(state, heartbeat, compatibility);
+                setControlsEnabled(!saving);
+            });
+        });
+    }
+
+    private void renderState(TemplateStore.StateSnapshot state, long heartbeat, String compatibility) {
+        boolean enrolled = state.enrolled;
+        boolean legacyTemplates = state.legacyTemplates;
+        long age = System.currentTimeMillis() - heartbeat;
+        boolean hookSeen = heartbeat > 0 && age >= 0 && age < 24L * 60L * 60L * 1000L;
+        statusView.setText((hookSeen ? "● 最近 24 小时收到 LSPosed 心跳" : "○ 等待 LSPosed 加载")
                 + "\n" + (enrolled ? "已录入新版人脸"
                 : legacyTemplates ? "检测到旧版人脸数据，请重新录入" : "尚未录入人脸")
+                + (!state.storageAvailable ? "\n数据无法读取，已安全停用，请检查或重新录入" : "")
+                + (state.lockoutUntil > System.currentTimeMillis() ? "\n多次识别失败，请稍后重试或输入 PIN" : "")
                 + (hookSeen && !compatibility.isEmpty() ? "\n\n" + compatibility : ""));
         statusView.setTextColor(hookSeen ? Color.rgb(20, 125, 70) : Color.rgb(120, 75, 20));
-        enabledSwitch.setChecked(enabled && enrolled);
+        rendering = true;
+        enabledSwitch.setChecked(state.enabled && enrolled);
+        rendering = false;
         enrollButton.setText(enrolled ? "重新录入人脸"
                 : legacyTemplates ? "升级并重新录入" : "录入人脸");
         testButton.setEnabled(enrolled);
@@ -232,12 +264,10 @@ public final class MainActivity extends Activity {
     }
 
     private void selectAnimationStyle(int style) {
-        TemplateStore.setAnimationStyle(this, style);
-        updateAnimationStyleControls();
         String name = style == TemplateStore.ANIMATION_STYLE_DYNAMIC_ISLAND
                 ? "灵动岛" : "面容光环";
-        Toast.makeText(this, "已切换为“" + name + "”，下次亮屏生效",
-                Toast.LENGTH_SHORT).show();
+        saveSetting(() -> TemplateStore.trySetAnimationStyle(this, style),
+                "已切换为“" + name + "”，下次亮屏生效");
     }
 
     private void updateAnimationStyleControls() {
@@ -245,7 +275,8 @@ public final class MainActivity extends Activity {
                 || animationStyleSummary == null) {
             return;
         }
-        int style = TemplateStore.getAnimationStyle(this);
+        if (displayedState == null) return;
+        int style = displayedState.animationStyle;
         boolean island = style == TemplateStore.ANIMATION_STYLE_DYNAMIC_ISLAND;
         styleButtonState(faceIdStyleButton, !island);
         styleButtonState(islandStyleButton, island);
@@ -255,8 +286,7 @@ public final class MainActivity extends Activity {
     }
 
     private void selectRecognitionProfile(int profile) {
-        TemplateStore.setRecognitionProfile(this, profile);
-        updateRecognitionProfileControls();
+        saveSetting(() -> TemplateStore.trySetRecognitionProfile(this, profile), null);
     }
 
     private void updateRecognitionProfileControls() {
@@ -264,7 +294,8 @@ public final class MainActivity extends Activity {
                 || comfortRecognitionButton == null || recognitionProfileSummary == null) {
             return;
         }
-        int profile = TemplateStore.getRecognitionProfile(this);
+        if (displayedState == null) return;
+        int profile = displayedState.recognitionProfile;
         styleButtonState(strictRecognitionButton,
                 profile == TemplateStore.RECOGNITION_PROFILE_STRICT);
         styleButtonState(balancedRecognitionButton,
@@ -286,6 +317,38 @@ public final class MainActivity extends Activity {
         startActivityForResult(intent, requestCode);
     }
 
+    private void saveSetting(BooleanSupplier write, String successMessage) {
+        if (saving) return;
+        saving = true;
+        setControlsEnabled(false);
+        StoreTasks.execute(() -> {
+            boolean success;
+            try { success = write.getAsBoolean(); }
+            catch (RuntimeException failure) { success = false; }
+            final boolean saved = success;
+            runOnUiThread(() -> {
+                saving = false;
+                if (!resumed || isFinishing() || isDestroyed()) return;
+                if (!saved || successMessage != null) Toast.makeText(this,
+                        saved ? successMessage : "保存失败，请重试；原设置仍保留", Toast.LENGTH_LONG).show();
+                refreshState();
+            });
+        });
+    }
+
+    private void setControlsEnabled(boolean enabled) {
+        if (enabledSwitch == null) return;
+        enabledSwitch.setEnabled(enabled);
+        enrollButton.setEnabled(enabled);
+        deleteButton.setEnabled(enabled);
+        testButton.setEnabled(enabled && displayedState != null && displayedState.enrolled);
+        faceIdStyleButton.setEnabled(enabled);
+        islandStyleButton.setEnabled(enabled);
+        strictRecognitionButton.setEnabled(enabled);
+        balancedRecognitionButton.setEnabled(enabled);
+        comfortRecognitionButton.setEnabled(enabled);
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -294,7 +357,9 @@ public final class MainActivity extends Activity {
         } else if (requestCode == REQUEST_TEST && data != null) {
             float score = data.getFloatExtra(Constants.EXTRA_SCORE, Float.NaN);
             String result = resultCode == RESULT_OK ? "识别成功" : "识别失败";
-            if (!Float.isNaN(score)) {
+            String message = data.getStringExtra("message");
+            if (message != null && !message.isEmpty()) result += "：" + message;
+            if (Float.isFinite(score) && score >= 0 && score < Float.MAX_VALUE) {
                 result += String.format(Locale.CHINA, "，距离 %.3f", score);
             }
             new AlertDialog.Builder(this).setTitle("测试结果").setMessage(result)
