@@ -32,6 +32,7 @@ final class CameraCaptureSession {
         void onFrame(ImageProxy image, int rotation, List<Face> faces, long capturedAtMs);
         void onRejectedFrame(String reason);
         void onCameraError(String message);
+        default void onClosed() { }
     }
 
     private static final long MAX_ANALYSIS_AGE_MS = 750;
@@ -207,6 +208,8 @@ final class CameraCaptureSession {
             if (released != null) released.close();
         } catch (RuntimeException failure) {
             Log.w("Pixel2DFace", "Detector close failed", failure);
+        } finally {
+            listener.onClosed();
         }
     }
 }

@@ -82,14 +82,14 @@ final class IdentityModelCodec {
         properties.remove(CHECKSUM);
     }
 
-    private static String vector(float[] values) {
+    static String vector(float[] values) {
         ByteBuffer buffer = ByteBuffer.allocate(values.length * Float.BYTES)
                 .order(ByteOrder.LITTLE_ENDIAN);
         for (float value : values) buffer.putFloat(value);
         return Base64.getEncoder().encodeToString(buffer.array());
     }
 
-    private static float[] vector(Properties properties, String key, int length) {
+    static float[] vector(Properties properties, String key, int length) {
         String encoded = properties.getProperty(key);
         int byteLength = length * Float.BYTES;
         int encodedLength = ((byteLength + 2) / 3) * 4;

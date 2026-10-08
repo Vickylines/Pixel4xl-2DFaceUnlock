@@ -10,9 +10,12 @@ android {
         applicationId "com.yusd.pixel2dface"
         minSdk 29
         targetSdk 36
-        versionCode 23
-        versionName "0.9.3-refactor"
-        testInstrumentationRunner "com.yusd.pixel2dface.StorageInstrumentation"
+        versionCode 24
+        versionName "0.10.0-candidate"
+        manifestPlaceholders = [isXposedModule: "true"]
+        testInstrumentationRunner project.hasProperty("provisioning")
+                ? "com.yusd.pixel2dface.EnrollmentTransferInstrumentation"
+                : "com.yusd.pixel2dface.StorageInstrumentation"
         ndk {
             abiFilters "arm64-v8a"
         }
@@ -28,12 +31,23 @@ android {
     }
 
     buildTypes {
+        validation {
+            initWith debug
+            applicationIdSuffix ".validation"
+            versionNameSuffix "-validation"
+            manifestPlaceholders = [isXposedModule: "false"]
+            matchingFallbacks = ["debug"]
+        }
         release {
             // Preserve the locally installed certificate when building this upgrade.
             // A release build still disables Android's debuggable/run-as access.
             signingConfig signingConfigs.debug
         }
     }
+
+    testBuildType project.hasProperty("validation") ? "validation"
+            : project.hasProperty("releaseTest") ? "release" : "debug"
+    androidResources { noCompress += "tflite" }
 
     packaging {
         resources {
@@ -51,6 +65,20 @@ dependencies {
     implementation "androidx.camera:camera-lifecycle:1.4.2"
     implementation "androidx.camera:camera-view:1.4.2"
     implementation "com.google.mlkit:face-detection:16.1.7"
+    implementation "com.google.ai.edge.litert:litert:1.4.0"
 
     testImplementation "junit:junit:4.13.2"
 }
+
+def verifyFaceModel = tasks.register("verifyFaceModel") {
+    def model = layout.projectDirectory.file("src/main/assets/models/mobilefacenet.tflite")
+    inputs.file(model)
+    doLast {
+        def digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(model.asFile.bytes).encodeHex().toString()
+        if (digest != "d8ba40c0127fb8ca9917e8fddc79bbbda063657bc92a496d34da0bc8a760443b") {
+            throw new GradleException("MobileFaceNet model does not match the pinned upstream asset")
+        }
+    }
+}
+tasks.named("preBuild").configure { dependsOn(verifyFaceModel) }

@@ -11,7 +11,7 @@ import java.util.Properties;
  * policy, legacy migration, and transient hook state each have a separate owner.
  */
 public final class TemplateStore {
-    public static final int CURRENT_TEMPLATE_VERSION = IdentityModelCodec.VERSION;
+    public static final int CURRENT_TEMPLATE_VERSION = TemplateCodec.VERSION;
     public static final float DEFAULT_THRESHOLD = 0.33f;
     public static final int RECOGNITION_PROFILE_STRICT = 0;
     public static final int RECOGNITION_PROFILE_BALANCED = 1;
@@ -28,8 +28,7 @@ public final class TemplateStore {
     public static boolean hasLegacyTemplates(Context context) {
         return read(context, false, properties ->
                 StorePolicy.integer(properties, "template_count", 0) > 0
-                && StorePolicy.integer(properties, "template_version", 1)
-                != CURRENT_TEMPLATE_VERSION);
+                && !TemplateCodec.supports(StorePolicy.integer(properties, "template_version", 1)));
     }
 
     public static float getCalibratedThreshold(Context context) {
@@ -52,7 +51,7 @@ public final class TemplateStore {
 
     public static boolean trySetEnabled(Context context, boolean enabled) {
         return mutate(context, properties -> {
-            if (enabled && (IdentityModelCodec.decode(properties) == null
+            if (enabled && (TemplateCodec.decode(properties) == null
                     || !StorePolicy.validFailureState(properties))) return false;
             properties.setProperty("enabled", Boolean.toString(enabled));
             return true;
@@ -80,10 +79,10 @@ public final class TemplateStore {
         }, true);
     }
 
-    public static boolean saveIdentityModel(Context context, IdentityModel model) {
+    public static boolean saveIdentityModel(Context context, IdentityTemplate model) {
         boolean saved = AtomicStoreFiles.locked(context, false, directory -> {
             Properties properties = AtomicStoreFiles.readProperties(context, directory);
-            if (!IdentityModelCodec.encodeInto(properties, model)) return false;
+            if (!TemplateCodec.encodeInto(properties, model)) return false;
             properties.setProperty("enabled", "true");
             StorePolicy.resetFailures(properties);
             // Explicit re-enrollment may repair invalid security metadata, preserving
@@ -98,8 +97,8 @@ public final class TemplateStore {
         return saved;
     }
 
-    public static IdentityModel loadIdentityModel(Context context) {
-        return read(context, null, IdentityModelCodec::decode);
+    public static IdentityTemplate loadIdentityModel(Context context) {
+        return read(context, null, TemplateCodec::decode);
     }
 
     public static void clearTemplates(Context context) { tryClearTemplates(context); }
@@ -107,7 +106,7 @@ public final class TemplateStore {
     public static boolean tryClearTemplates(Context context) {
         boolean cleared = AtomicStoreFiles.locked(context, false, directory -> {
             Properties properties = AtomicStoreFiles.readProperties(context, directory);
-            IdentityModelCodec.clear(properties);
+            TemplateCodec.clear(properties);
             properties.remove("failures");
             properties.remove("lockout_until");
             properties.setProperty("enabled", "false");
@@ -159,9 +158,9 @@ public final class TemplateStore {
     }
 
     private static RecognitionSettings recognitionSettings(Properties properties) {
-        IdentityModel model = IdentityModelCodec.decode(properties);
+        IdentityTemplate model = TemplateCodec.decode(properties);
         return new RecognitionSettings(model, StorePolicy.recognitionThreshold(properties),
-                new StateSnapshot(properties, model), IdentityModelCodec.fingerprint(properties));
+                new StateSnapshot(properties, model), TemplateCodec.fingerprint(properties));
     }
 
     static final class UnlockPreparation {
@@ -199,7 +198,7 @@ public final class TemplateStore {
         return state.storageAvailable && state.enabled && state.enrolled
                 && state.lockoutUntil <= System.currentTimeMillis()
                 && state.revision == settings.state.revision
-                && IdentityModelCodec.fingerprint(properties).equals(settings.fingerprint);
+                && TemplateCodec.fingerprint(properties).equals(settings.fingerprint);
     }
 
     static final class StateSnapshot {
@@ -210,30 +209,31 @@ public final class TemplateStore {
         final int recognitionProfile;
         final boolean legacyTemplates;
         final boolean storageAvailable;
+        final boolean neuralTemplate;
         final long revision;
 
-        StateSnapshot(Properties properties) { this(properties, IdentityModelCodec.decode(properties)); }
+        StateSnapshot(Properties properties) { this(properties, TemplateCodec.decode(properties)); }
 
-        private StateSnapshot(Properties properties, IdentityModel model) {
-            boolean claimsCurrentModel = StorePolicy.integer(properties, "template_version", 1)
-                    == CURRENT_TEMPLATE_VERSION
+        private StateSnapshot(Properties properties, IdentityTemplate model) {
+            boolean claimsCurrentModel = TemplateCodec.supports(StorePolicy.integer(properties, "template_version", 1))
                     && StorePolicy.integer(properties, "template_count", 0) != 0;
             storageAvailable = StorePolicy.validFailureState(properties) && validRevision(properties)
                     && (!claimsCurrentModel || model != null);
             enrolled = model != null;
+            neuralTemplate = model instanceof EmbeddingIdentity;
             enabled = storageAvailable && enrolled && StorePolicy.enabled(properties);
             lockoutUntil = storageAvailable ? StorePolicy.lockoutUntil(properties) : Long.MAX_VALUE;
             animationStyle = StorePolicy.animation(properties);
             recognitionProfile = StorePolicy.profile(properties);
             legacyTemplates = StorePolicy.integer(properties, "template_count", 0) > 0
-                    && StorePolicy.integer(properties, "template_version", 1)
-                    != CURRENT_TEMPLATE_VERSION;
+                    && !TemplateCodec.supports(StorePolicy.integer(properties, "template_version", 1));
             revision = StorePolicy.longValue(properties, REVISION, 0L);
         }
 
         private StateSnapshot() {
             enabled = false;
             enrolled = false;
+            neuralTemplate = false;
             lockoutUntil = Long.MAX_VALUE;
             animationStyle = ANIMATION_STYLE_FACE_ID;
             recognitionProfile = RECOGNITION_PROFILE_BALANCED;
@@ -246,16 +246,16 @@ public final class TemplateStore {
     }
 
     static final class RecognitionSettings {
-        final IdentityModel model;
+        final IdentityTemplate model;
         final float threshold;
         final StateSnapshot state;
         private final String fingerprint;
 
-        RecognitionSettings(IdentityModel model, float threshold, StateSnapshot state) {
+        RecognitionSettings(IdentityTemplate model, float threshold, StateSnapshot state) {
             this(model, threshold, state, "");
         }
 
-        private RecognitionSettings(IdentityModel model, float threshold, StateSnapshot state,
+        private RecognitionSettings(IdentityTemplate model, float threshold, StateSnapshot state,
                 String fingerprint) {
             this.model = model;
             this.threshold = threshold;

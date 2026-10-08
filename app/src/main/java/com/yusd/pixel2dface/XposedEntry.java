@@ -18,6 +18,7 @@ public final class XposedEntry implements IXposedHookLoadPackage {
     private static SystemUiSessionCoordinator coordinator;
 
     @Override public void handleLoadPackage(XC_LoadPackage.LoadPackageParam loaded) {
+        if (!"com.yusd.pixel2dface".equals(BuildConfig.APPLICATION_ID)) return;
         if (!Constants.SYSTEM_UI_PACKAGE.equals(loaded.packageName)
                 || !Constants.SYSTEM_UI_PACKAGE.equals(loaded.processName)) {
             return;

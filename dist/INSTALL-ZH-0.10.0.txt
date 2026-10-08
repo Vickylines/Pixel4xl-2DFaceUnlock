@@ -1,0 +1,23 @@
+Pixel 2D Face Unlock 0.10.0-candidate
+本地候选版，已安装本机，未发布到 GitHub。
+
+目前使用的是正式包 com.yusd.pixel2dface，versionCode 24。原模块作用域与设置保留。
+经用户授权，已把验证版里确认成功的人脸模板迁入正式包，无需再次录入。
+验证版应用保留备用；两个测试辅助 APK 已卸载。
+
+已验证：154 项 JVM 测试、326 项正式包设备断言；一次日志确认的真实锁屏认证与退出；
+熄屏取消、相机不可用超时、相机权限恢复后的重新采集；Provider 拒绝非 SystemUI 调用。
+最终手机已熄屏、保持锁定、相机已释放。统计识别率、异人拒绝、低光和照片/视频防伪尚未验证。
+
+文件：
+- Pixel2DFaceUnlock-coral-0.10.0-candidate.apk：已安装的完整模块。
+- Pixel2DFaceUnlock-0.10.0-validation.apk：独立验证包，不接管锁屏。
+- SHA256SUMS-0.10.0.txt：两个 APK 的 SHA-256。
+
+如需恢复原识别算法，在仓库目录运行：
+python tools/restore_legacy_enrollment.py --apply
+默认不带 --apply 只校验回退材料。该工具通过同签名维护 APK 和原子存储事务恢复原 v3 身份，
+保留当前设置并撤销旧授权，不降级 APK。回退方法已经过合成数据设备测试，未对本机实际回退。
+本地回退材料保存在 device-backups/20261008-before-full-install/ 与 test-artifacts/，均未纳入 Git。
+
+更多来源、实现与实测记录见 RECOGNITION-REFACTOR-0.10.0.md。

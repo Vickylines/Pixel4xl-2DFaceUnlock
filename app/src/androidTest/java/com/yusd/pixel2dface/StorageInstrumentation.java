@@ -50,11 +50,16 @@ public final class StorageInstrumentation extends Instrumentation {
             corruptFilePreservation();
             providerProtocol();
             failedWrites();
+            neuralStorage();
+            verifiedEnrollmentTransfer();
+            verifiedLegacyRollback();
+            checks.addAndGet(NeuralInstrumentationChecks.run(getTargetContext(), result));
             result.putString("result", "PASS");
             result.putInt("checks", checks.get());
             cleanup();
             finish(Activity.RESULT_OK, result);
         } catch (Throwable failure) {
+            android.util.Log.e("Pixel2DFaceTest", "Instrumentation failed", failure);
             result.putString("result", "FAIL: " + failure);
             result.putInt("checks", checks.get());
             cleanup();
@@ -69,6 +74,11 @@ public final class StorageInstrumentation extends Instrumentation {
         testRoots.add(root);
         return new ContextWrapper(getTargetContext()) {
             @Override public File getFilesDir() { return root; }
+            @Override public File getCacheDir() {
+                File cache = new File(root, "cache");
+                if (!cache.isDirectory() && !cache.mkdirs()) throw new IllegalStateException("Test cache unavailable");
+                return cache;
+            }
             @Override public ApplicationInfo getApplicationInfo() {
                 ApplicationInfo info = new ApplicationInfo(super.getApplicationInfo());
                 info.dataDir = root.getAbsolutePath();
@@ -90,7 +100,7 @@ public final class StorageInstrumentation extends Instrumentation {
         TemplateStore.RecognitionSettings settings = TemplateStore.loadRecognitionSettings(context);
         check(settings.model != null && settings.state.enabled && settings.state.enrolled,
                 "single-read model and settings");
-        check(settings.model.compare(model.textureCentroid, model.geometryCentroid,
+        check(settings.model.evaluate(model.textureCentroid, model.geometryCentroid,
                 settings.threshold).accepted, "model round trip preserves matching");
         CountDownLatch start = new CountDownLatch(1);
         AtomicReference<Throwable> failure = new AtomicReference<>();
@@ -211,7 +221,7 @@ public final class StorageInstrumentation extends Instrumentation {
         TemplateStore.RecognitionSettings settings =
                 TemplateStore.consumeAuthorizedRecognitionSettings(context, token);
         check(settings != null && settings.state.revision == prepared.state.revision
-                && settings.model.compare(model.textureCentroid, model.geometryCentroid,
+                && settings.model.evaluate(model.textureCentroid, model.geometryCentroid,
                         settings.threshold).accepted,
                 "consumption returns the same validated identity and configuration");
         check(!new File(context.getFilesDir(), "unlock.session").exists(),
@@ -433,6 +443,118 @@ public final class StorageInstrumentation extends Instrumentation {
             result.load(in);
         }
         return result;
+    }
+
+    private void neuralStorage() throws Exception {
+        Context context = isolatedContext();
+        check(TemplateStore.saveIdentityModel(context, syntheticModel()), "seed compatible v3");
+        TemplateStore.RecognitionSettings old = TemplateStore.loadRecognitionSettings(context);
+        float[] vector = new float[192]; vector[0] = 1;
+        check(TemplateStore.saveIdentityModel(context, new EmbeddingIdentity(vector, .24f)), "save v4");
+        TemplateStore.RecognitionSettings settings = TemplateStore.loadRecognitionSettings(context);
+        check(settings.state.enabled && settings.state.neuralTemplate && settings.model instanceof EmbeddingIdentity,
+                "v4 snapshot selects neural backend");
+        check(!TemplateStore.isRecognitionSettingsCurrent(context, old), "v3 in-flight identity revoked");
+        check(settings.model.evaluate(vector, null, settings.threshold).accepted, "v4 disk identity matches");
+        check(!properties(context).containsKey("template_0"), "v3 features removed from new template");
+        String token = "synthetic-neural-token-00000000000001";
+        check(TemplateStore.prepareUnlockSession(context, token).authorized, "v4 grant prepared");
+        check(TemplateStore.consumeAuthorizedRecognitionSettings(context, token).model instanceof EmbeddingIdentity,
+                "v4 grant returns neural template");
+        check(TemplateStore.consumeAuthorizedRecognitionSettings(context, token) == null, "v4 grant not replayable");
+        Properties corrupt = properties(context);
+        corrupt.setProperty("embedding_model", "unknown-model");
+        corrupt.setProperty("identity_checksum", TemplateCodec.fingerprint(corrupt));
+        try (FileOutputStream out = new FileOutputStream(new File(context.getFilesDir(), "face2d.properties"))) {
+            corrupt.store(out, "synthetic");
+        }
+        check(!TemplateStore.readState(context).storageAvailable, "unsupported embedding cannot fall back");
+        check(!TemplateStore.validateAndRecordSuccess(context, settings), "changed embedding cannot authenticate");
+        check(TemplateStore.tryClearTemplates(context), "clear malformed v4");
+        check(!properties(context).containsKey("embedding_centroid"), "clear erases neural identity");
+    }
+
+    private void verifiedEnrollmentTransfer() throws Exception {
+        for (boolean enabled : new boolean[]{true, false}) {
+            Context context = isolatedContext();
+            check(TemplateStore.saveIdentityModel(context, syntheticModel()), "seed transfer target");
+            check(TemplateStore.trySetRecognitionProfile(context, 2), "set original transfer preference");
+            check(TemplateStore.tryRecordFailure(context), "preserve prior failure state");
+            String token = "synthetic-transfer-token-00000000000001";
+            check(TemplateStore.prepareUnlockSession(context, token).authorized, "prepare old grant");
+            check(TemplateStore.trySetEnabled(context, enabled), "set original enabled state");
+            Properties original = properties(context);
+            byte[] originalBytes = AtomicStoreFiles.readBytes(new File(context.getFilesDir(), AtomicStoreFiles.STORE_FILE),
+                    AtomicStoreFiles.MAX_STORE_BYTES);
+            String targetHash = EnrollmentTransferInstrumentation.hash(originalBytes);
+            File staging = new File(context.getCacheDir(), "verified-enrollment-transfer");
+            check(staging.mkdir(), "create synthetic transfer stage");
+            Properties source = new Properties();
+            float[] vector = new float[192]; vector[0] = 1;
+            check(TemplateCodec.encodeInto(source, new EmbeddingIdentity(vector, .24f)), "encode synthetic transfer identity");
+            AtomicStoreFiles.writeProperties(staging, source);
+            File sourceFile = new File(staging, AtomicStoreFiles.STORE_FILE);
+            String sourceHash = EnrollmentTransferInstrumentation.hash(AtomicStoreFiles.readBytes(sourceFile,
+                    AtomicStoreFiles.MAX_STORE_BYTES));
+            String wrongHash = new String(new char[64]).replace('\0', '0');
+            expectTransferFailure(context, wrongHash, targetHash, "changed source rejected");
+            expectTransferFailure(context, sourceHash, wrongHash, "changed target rejected");
+            check(java.util.Arrays.equals(originalBytes, AtomicStoreFiles.readBytes(
+                    new File(context.getFilesDir(), AtomicStoreFiles.STORE_FILE), AtomicStoreFiles.MAX_STORE_BYTES)),
+                    "rejected transfer preserves target bytes");
+            Properties invalid = new Properties(); invalid.putAll(source);
+            invalid.setProperty("embedding_model", "other-model");
+            invalid.setProperty("identity_checksum", TemplateCodec.fingerprint(invalid));
+            AtomicStoreFiles.writeProperties(staging, invalid);
+            String invalidHash = EnrollmentTransferInstrumentation.hash(AtomicStoreFiles.readBytes(sourceFile,
+                    AtomicStoreFiles.MAX_STORE_BYTES));
+            expectTransferFailure(context, invalidHash, targetHash, "unknown model rejected despite valid file hash");
+            AtomicStoreFiles.writeProperties(staging, source);
+            sourceHash = EnrollmentTransferInstrumentation.hash(AtomicStoreFiles.readBytes(sourceFile,
+                    AtomicStoreFiles.MAX_STORE_BYTES));
+            EnrollmentTransferInstrumentation.transfer(context, sourceHash, targetHash);
+            Properties after = properties(context);
+            check(TemplateCodec.decode(after) instanceof EmbeddingIdentity, "transfer selects neural backend");
+            check(TemplateCodec.fingerprint(source).equals(TemplateCodec.fingerprint(after)), "transferred identity preserved");
+            check(TemplateStore.isEnabled(context) == enabled, "enabled state preserved");
+            check(TemplateStore.getRecognitionProfile(context) == 2 && "1".equals(after.getProperty("failures")),
+                    "preferences and failures preserved");
+            check(StorePolicy.longValue(after, "store_revision", -1) == StorePolicy.longValue(original, "store_revision", -1) + 1,
+                    "transfer increments revision once");
+            check(TemplateStore.consumeAuthorizedRecognitionSettings(context, token) == null, "old grant revoked");
+            check(!staging.exists(), "transfer staging removed");
+        }
+    }
+
+    private void expectTransferFailure(Context context, String sourceHash, String targetHash, String message) {
+        boolean rejected = false;
+        try { EnrollmentTransferInstrumentation.transfer(context, sourceHash, targetHash); }
+        catch (java.io.IOException expected) { rejected = true; }
+        check(rejected, message);
+    }
+
+    private void verifiedLegacyRollback() throws Exception {
+        Context context = isolatedContext();
+        float[] vector = new float[192]; vector[0] = 1;
+        check(TemplateStore.saveIdentityModel(context, new EmbeddingIdentity(vector, .24f)), "seed rollback target");
+        check(TemplateStore.trySetRecognitionProfile(context, 0), "preserve rollback profile");
+        File stage = new File(context.getCacheDir(), "verified-enrollment-transfer");
+        check(stage.mkdir(), "create rollback stage");
+        Properties original = new Properties();
+        check(IdentityModelCodec.encodeInto(original, syntheticModel()), "encode prior v3 identity");
+        AtomicStoreFiles.writeProperties(stage, original);
+        String sourceHash = EnrollmentTransferInstrumentation.hash(AtomicStoreFiles.readBytes(
+                new File(stage, AtomicStoreFiles.STORE_FILE), AtomicStoreFiles.MAX_STORE_BYTES));
+        String targetHash = EnrollmentTransferInstrumentation.hash(AtomicStoreFiles.readBytes(
+                new File(context.getFilesDir(), AtomicStoreFiles.STORE_FILE), AtomicStoreFiles.MAX_STORE_BYTES));
+        expectTransferFailure(context, sourceHash, targetHash, "v3 downgrade needs explicit rollback option");
+        EnrollmentTransferInstrumentation.transfer(context, sourceHash, targetHash, true);
+        check(TemplateStore.loadIdentityModel(context) instanceof IdentityModel, "rollback restores original backend");
+        check(TemplateStore.isEnabled(context) && TemplateStore.getRecognitionProfile(context) == 0,
+                "rollback preserves preferences");
+        check(TemplateCodec.fingerprint(properties(context)).equals(TemplateCodec.fingerprint(original)),
+                "rollback restores exact original identity");
+        check(!stage.exists(), "rollback removes staging");
     }
 
     private void expectInvalid(Runnable operation, String message) {

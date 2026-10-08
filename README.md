@@ -4,7 +4,9 @@
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel4xl-2DFaceUnlock)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-这是一个面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL 便利解锁模块。当前版本为 0.9.3：在保留 v3 人脸模板、纹理与几何双信号门槛的基础上，拆分相机、识别、存储与 SystemUI 会话职责，修复失败退出与上滑流程，并减少相机启动前的固定等待、IPC 和模板重复读取。
+> 本地开发分支已增加 **0.10.0-candidate**：可替换识别后端、离线 MobileFaceNet、v4 模板与独立验证包。现有 v3 模板保持兼容；需要重新录入才能使用新引擎。此候选版已安装到本机，完成一次由设备日志确认的完整锁屏认证与退出，以及熄屏/相机不可用/失败恢复回归；尚未公开发布，也未做异人或防伪验证。参见 [本次重构与验证记录](RECOGNITION-REFACTOR-0.10.0.md)。
+
+这是一个面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL 便利解锁模块。已发布的稳定基线为 0.9.3：在保留 v3 人脸模板、纹理与几何双信号门槛的基础上，拆分相机、识别、存储与 SystemUI 会话职责，修复失败退出与上滑流程，并减少相机启动前的固定等待、IPC 和模板重复读取。
 
 本次重构的设计见 [架构说明](ARCHITECTURE.md)，实际验证与尚未覆盖的场景见 [重构验证报告](REFACTOR-REPORT.md)。0.9.0–0.9.2 是本地验证迭代，合并后的安装包随 0.9.3 发布。
 

@@ -1,0 +1,2 @@
+e3f6fdbe02982831b35e679ce5b020d450daae044d3ffa21bf113bcc9bc29ec6  Pixel2DFaceUnlock-coral-0.10.0-candidate.apk
+8e0c37e7d12041e1dfd730cdc46ab9b3561adee46d4dc5bf9017d1c8d2baed73  Pixel2DFaceUnlock-0.10.0-validation.apk

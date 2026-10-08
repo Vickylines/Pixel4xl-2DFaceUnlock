@@ -32,7 +32,7 @@ public class FaceCaptureActivity extends ComponentActivity {
     private final Map<String, Integer> frameOutcomes = new LinkedHashMap<>();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final FaceFrameExtractor extractor = new FaceFrameExtractor();
-    private final EnrollmentSession enrollment = new EnrollmentSession();
+    private final EmbeddingEnrollment enrollment = new EmbeddingEnrollment();
     private final PassiveUnlockFailurePolicy passiveFailure = new PassiveUnlockFailurePolicy();
     private CameraCaptureSession camera;
     private CaptureContentView content;
@@ -111,6 +111,7 @@ public class FaceCaptureActivity extends ComponentActivity {
                 if (recognition != null) recognition.clear();
                 showDetail("人脸检测暂时不可用，请保持手机稳定");
             }
+            @Override public void onClosed() { extractor.close(); }
             @Override public void onCameraError(String message) { finishFailure(false, message); }
         });
         // Include initialization in the deadline so a stalled provider cannot leave a host alive.
@@ -135,6 +136,7 @@ public class FaceCaptureActivity extends ComponentActivity {
                     recognition = new RecognitionEngine(settings.model, settings.threshold);
                     generation = recognition.beginSession(createdAt);
                 }
+                extractor.initialize(this, isEnrollment() || settings.model instanceof EmbeddingIdentity);
                 main.post(() -> {
                     if (finished.get() || isFinishing() || isDestroyed()) return;
                     if (isUnlock()) {
@@ -151,7 +153,7 @@ public class FaceCaptureActivity extends ComponentActivity {
                         catch (RuntimeException failure) { finishFailure(false, "人脸引擎初始化失败"); }
                     });
                 });
-            } catch (RuntimeException failure) {
+            } catch (Exception | LinkageError failure) {
                 android.util.Log.w("Pixel2DFace", "Capture initialization failed", failure);
                 finishFailure(false, "人脸引擎初始化失败");
             }
@@ -185,21 +187,21 @@ public class FaceCaptureActivity extends ComponentActivity {
             long evaluatedAt = SystemClock.elapsedRealtime();
             if (capturedAt > evaluatedAt
                     || evaluatedAt - capturedAt > RecognitionEngine.MAX_FRAME_AGE_MS) return;
-            if (!enrollment.add(capturedAt, frame.sample, frame.texture, frame.geometry)) {
+            if (!enrollment.add(capturedAt, frame.sample, frame.texture)) {
                 showDetail("请自然正视镜头并保持稳定"); return;
             }
             showInstruction("录入人脸：自然看向屏幕即可");
             showDetail("正在自动校准，已采集 " + enrollment.count() + "/"
-                    + EnrollmentSession.REQUIRED_SAMPLES);
+                    + EmbeddingIdentity.SAMPLE_COUNT);
             if (enrollment.isComplete() && !finished.get()) {
-                IdentityModel model = enrollment.buildModel();
+                IdentityTemplate model = enrollment.buildModel();
                 // Claim the outcome before touching the existing enrollment. Cancellation
                 // either wins this CAS and prevents the write, or observes a committed capture.
                 if (!finished.compareAndSet(false, true)) return;
                 boolean saved;
                 try { saved = TemplateStore.saveIdentityModel(this, model); }
                 catch (RuntimeException failure) { saved = false; }
-                if (saved) publishSuccess(model.textureThreshold, false);
+                if (saved) publishSuccess(model.maximumThreshold(), false);
                 else publishFailure("保存人脸失败，请重试");
             }
             return;
@@ -211,7 +213,7 @@ public class FaceCaptureActivity extends ComponentActivity {
                 ? decision.votes.confirmed ? "CONFIRMED"
                 : decision.votes.stable ? "MATCH_PENDING" : "MATCH_UNSTABLE"
                 : decision.reason.name());
-        if (Float.isFinite(decision.match.textureScore)) bestScore = Math.min(bestScore, decision.match.textureScore);
+        if (Float.isFinite(decision.match.score)) bestScore = Math.min(bestScore, decision.match.score);
         showDetail(decision.reason == FrameQualityPolicy.Reason.NONE
                 ? "正在确认 " + decision.votes.matches + "/" + RecognitionStabilizer.REQUIRED_MATCHES
                 : decision.reason.message);

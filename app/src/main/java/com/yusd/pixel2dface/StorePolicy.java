@@ -29,12 +29,19 @@ final class StorePolicy {
     static int safeAnimation(int value) { return value == 1 ? 1 : 0; }
 
     static float calibratedThreshold(Properties properties) {
+        if (integer(properties, "template_version", -1) == TemplateCodec.VERSION) {
+            return Math.max(EmbeddingIdentity.MIN_THRESHOLD, Math.min(EmbeddingIdentity.MAX_THRESHOLD,
+                    finiteFloat(properties, "calibrated_threshold", EmbeddingIdentity.MIN_THRESHOLD)));
+        }
         float value = finiteFloat(properties, "calibrated_threshold", 0.33f);
         return Math.max(0.28f, Math.min(0.35f, value));
     }
 
     static float recognitionThreshold(Properties properties) {
         int value = profile(properties);
+        if (integer(properties, "template_version", -1) == TemplateCodec.VERSION) {
+            return Math.min(calibratedThreshold(properties), value == 0 ? 0.22f : value == 2 ? 0.28f : 0.26f);
+        }
         float cap = value == 0 ? 0.30f : value == 2 ? 0.35f : 0.33f;
         return Math.min(calibratedThreshold(properties), cap);
     }

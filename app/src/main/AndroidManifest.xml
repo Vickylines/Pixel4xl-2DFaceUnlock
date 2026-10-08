@@ -33,7 +33,7 @@
 
         <meta-data
             android:name="xposedmodule"
-            android:value="true" />
+            android:value="${isXposedModule}" />
         <meta-data
             android:name="xposeddescription"
             android:value="Google Pixel / AOSP 系 Android 10–16 简体中文 2D 人脸锁屏解锁" />
@@ -54,7 +54,7 @@
             android:name=".FaceCaptureActivity"
             android:excludeFromRecents="true"
             android:exported="false"
-            android:taskAffinity="com.yusd.pixel2dface.capture"
+            android:taskAffinity="${applicationId}.capture"
             android:theme="@style/Theme.Pixel2DFace.Capture"
             />
 
@@ -62,12 +62,12 @@
             android:name=".UnlockFaceCaptureActivity"
             android:excludeFromRecents="true"
             android:exported="true"
-            android:taskAffinity="com.yusd.pixel2dface.capture"
+            android:taskAffinity="${applicationId}.capture"
             android:theme="@style/Theme.Pixel2DFace.Capture" />
 
         <provider
             android:name=".ConfigProvider"
-            android:authorities="com.yusd.pixel2dface.config"
+            android:authorities="${applicationId}.config"
             android:directBootAware="false"
             android:exported="true" />
 

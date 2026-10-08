@@ -6,7 +6,7 @@ package com.yusd.pixel2dface;
  */
 final class RecognitionEngine {
     static final long MAX_FRAME_AGE_MS = 750L;
-    private final IdentityModel model;
+    private final IdentityTemplate model;
     private final float baseThreshold;
     private final RecognitionStabilizer stabilizer = new RecognitionStabilizer();
     private long generation;
@@ -17,9 +17,9 @@ final class RecognitionEngine {
     private boolean active;
     private boolean confirmed;
 
-    RecognitionEngine(IdentityModel model, float baseThreshold) {
-        if (model == null || !Float.isFinite(baseThreshold) || baseThreshold < 0.24f
-                || baseThreshold > model.textureThreshold) {
+    RecognitionEngine(IdentityTemplate model, float baseThreshold) {
+        if (model == null || !Float.isFinite(baseThreshold) || baseThreshold < model.minimumThreshold()
+                || baseThreshold > model.maximumThreshold()) {
             throw new IllegalArgumentException("Invalid recognition settings");
         }
         this.model = model;
@@ -73,18 +73,20 @@ final class RecognitionEngine {
             clear();
             return rejected(problem);
         }
-        if (!IdentityModel.validLiveInputs(texture, geometry)) {
+        if (!model.validSample(texture, geometry)) {
             clear();
             return rejected(FrameQualityPolicy.Reason.INVALID_DESCRIPTOR);
         }
         // A long sensor gap must also reset the eye counter, not just the vote window.
         if (stabilizer.hasGap(capturedAtMs)) openEyeFrames = 0;
         if (openEyeFrames < Integer.MAX_VALUE) openEyeFrames++;
-        float frameThreshold = FrameQualityPolicy.frameThreshold(baseThreshold, sample);
-        IdentityModel.Match match = model.compareValidated(texture, geometry, frameThreshold);
-        boolean strong = match.isHighConfidence(frameThreshold, model.geometryThreshold)
+        float frameThreshold = Math.max(model.minimumThreshold(), baseThreshold
+                - FrameQualityPolicy.posePenalty(sample) - FrameQualityPolicy.qualityPenalty(sample)
+                - FrameQualityPolicy.framingPenalty(sample));
+        IdentityEvidence match = model.evaluate(texture, geometry, frameThreshold);
+        boolean strong = match.highConfidence
                 && FrameQualityPolicy.highQuality(sample);
-        RecognitionStabilizer.Result votes = stabilizer.add(match.textureScore,
+        RecognitionStabilizer.Result votes = stabilizer.add(match.score,
                 frameThreshold, baseThreshold, match.accepted, strong, capturedAtMs);
         confirmed = votes.confirmed;
         return new Decision(match.accepted ? FrameQualityPolicy.Reason.NONE
@@ -93,19 +95,19 @@ final class RecognitionEngine {
     }
 
     private Decision rejected(FrameQualityPolicy.Reason reason) {
-        return new Decision(reason, IdentityModel.Match.rejected(),
+        return new Decision(reason, IdentityEvidence.rejected(),
                 RecognitionStabilizer.Result.empty(), baseThreshold, false, 0);
     }
 
     static final class Decision {
         final FrameQualityPolicy.Reason reason;
-        final IdentityModel.Match match;
+        final IdentityEvidence match;
         final RecognitionStabilizer.Result votes;
         final float frameThreshold;
         final boolean eyesOpen;
         final int openEyeFrames;
 
-        Decision(FrameQualityPolicy.Reason reason, IdentityModel.Match match,
+        Decision(FrameQualityPolicy.Reason reason, IdentityEvidence match,
                 RecognitionStabilizer.Result votes, float frameThreshold,
                 boolean eyesOpen, int openEyeFrames) {
             this.reason = reason;

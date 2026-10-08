@@ -1,0 +1,15 @@
+{
+  "asset": "mobilefacenet.tflite",
+  "sourceRepository": "https://github.com/syaringan357/Android-MobileFaceNet-MTCNN-FaceAntiSpoofing",
+  "sourceCommit": "d635649e711f5e16e6cd3dc06cbb329cd8d1d3b7",
+  "sourcePath": "app/src/main/assets/MobileFaceNet.tflite",
+  "sha256": "d8ba40c0127fb8ca9917e8fddc79bbbda063657bc92a496d34da0bc8a760443b",
+  "bytes": 5233396,
+  "repositoryLicense": "MIT; bundled at assets/licenses/MobileFaceNet-MIT.txt",
+  "upstreamTrainingImplementation": "https://github.com/sirius-ai/MobileFaceNet_TF",
+  "modelId": "mobilefacenet-d635649-rgb112-fivepoint-v1",
+  "input": {"shape": [2, 112, 112, 3], "type": "float32", "channels": "RGB", "normalization": "(channel - 127.5) / 128"},
+  "output": {"shape": [2, 192], "type": "float32", "postprocessing": "L2 normalization"},
+  "batchPolicy": "Two copies of the same aligned face; only the first embedding is used. Fixed internal graph reshapes prohibit batch=1.",
+  "limitations": "Research/demo weights; no product biometric accuracy or presentation-attack certification. Repository license does not establish separate training-data rights. Local candidate only, not a public release."
+}

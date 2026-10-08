@@ -7,7 +7,7 @@ import java.util.List;
  * Personalized two-signal identity model built from texture and landmark geometry.
  * It reuses one ML Kit result and one LBP descriptor, so it adds no model inference.
  */
-final class IdentityModel {
+final class IdentityModel implements IdentityTemplate {
     static final int GRID = 7;
     static final int BINS = 256;
     static final int CELL_COUNT = GRID * GRID;
@@ -145,6 +145,17 @@ final class IdentityModel {
                 1.35f, 2.00f);
         return new IdentityModel(textureCentroid, cellWeights, cellLimits, geometryCentroid,
                 geometryScales, textureThreshold, geometryThreshold);
+    }
+
+    @Override public float maximumThreshold() { return textureThreshold; }
+    @Override public float minimumThreshold() { return 0.24f; }
+    @Override public boolean validSample(float[] descriptor, float[] geometry) {
+        return validLiveInputs(descriptor, geometry);
+    }
+    @Override public IdentityEvidence evaluate(float[] descriptor, float[] geometry, float threshold) {
+        Match match = compare(descriptor, geometry, threshold);
+        return new IdentityEvidence(match.textureScore, match.accepted,
+                match.isHighConfidence(threshold, geometryThreshold));
     }
 
     Match compare(float[] texture, float[] geometry, float activeTextureThreshold) {

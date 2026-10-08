@@ -24,6 +24,7 @@ import java.util.function.BooleanSupplier;
 public final class MainActivity extends Activity {
     private static final int REQUEST_ENROLL = 100;
     private static final int REQUEST_TEST = 101;
+    private static final boolean VALIDATION = "validation".equals(BuildConfig.BUILD_TYPE);
 
     private TextView statusView;
     private Switch enabledSwitch;
@@ -83,6 +84,9 @@ public final class MainActivity extends Activity {
                         + " / API " + Build.VERSION.SDK_INT,
                 14, Color.rgb(82, 94, 108));
         root.addView(subtitle, margins(0, 6, 0, 18));
+        if (VALIDATION) root.addView(text("独立验证版：请录入人脸后点击“测试识别”。"
+                + "这里的数据与现有模块分开，不接管锁屏。", 15, Color.rgb(35, 85, 150)),
+                margins(0, 0, 0, 14));
 
         LinearLayout warning = card();
         TextView warningTitle = text("安全提示", 17, Color.rgb(130, 70, 0));
@@ -118,9 +122,11 @@ public final class MainActivity extends Activity {
             }
         });
         stateCard.addView(enabledSwitch);
+        if (VALIDATION) enabledSwitch.setVisibility(View.GONE);
         root.addView(stateCard, margins(0, 0, 0, 14));
 
         LinearLayout appearance = card();
+        if (VALIDATION) appearance.setVisibility(View.GONE);
         TextView appearanceTitle = text("锁屏动画", 18, Color.rgb(30, 40, 50));
         appearanceTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         appearance.addView(appearanceTitle);
@@ -212,12 +218,13 @@ public final class MainActivity extends Activity {
                 TemplateStore.RECOGNITION_PROFILE_BALANCED));
         comfortRecognitionButton.setOnClickListener(v -> selectRecognitionProfile(
                 TemplateStore.RECOGNITION_PROFILE_COMFORT));
-        options.addView(text("人脸距离会在录入时自动校准，并始终受安全上限约束；不再直接调系数。"
+        options.addView(text("新录入使用离线 MobileFaceNet；已有数据继续使用原识别引擎。距离在录入时校准，并受固定上限约束。"
                         + "“便捷”仅放宽很小范围，不能把普通 2D 前摄变成 Face ID。",
                 13, Color.rgb(100, 110, 120)), margins(0, 9, 0, 0));
         root.addView(options);
 
-        TextView steps = text("安装后操作：在 LSPosed 中启用本模块，仅勾选“系统界面”作用域，"
+        TextView steps = text(VALIDATION ? "验证版只用于本机录入和主动识别测试，无需在 LSPosed 中启用，也无需重启。"
+                        : "安装后操作：在 LSPosed 中启用本模块，仅勾选“系统界面”作用域，"
                         + "然后重启手机或重启 SystemUI。重启后的第一次解锁仍需输入 PIN。",
                 13, Color.rgb(85, 95, 105));
         steps.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -246,8 +253,9 @@ public final class MainActivity extends Activity {
         boolean legacyTemplates = state.legacyTemplates;
         long age = System.currentTimeMillis() - heartbeat;
         boolean hookSeen = heartbeat > 0 && age >= 0 && age < 24L * 60L * 60L * 1000L;
-        statusView.setText((hookSeen ? "● 最近 24 小时收到 LSPosed 心跳" : "○ 等待 LSPosed 加载")
-                + "\n" + (enrolled ? "已录入新版人脸"
+        statusView.setText((VALIDATION ? "独立验证模式 · 不需要启用 LSPosed"
+                : hookSeen ? "● 最近 24 小时收到 LSPosed 心跳" : "○ 等待 LSPosed 加载")
+                + "\n" + (enrolled ? (state.neuralTemplate ? "已录入 MobileFaceNet 人脸" : "已录入兼容版人脸；重新录入可切换新引擎")
                 : legacyTemplates ? "检测到旧版人脸数据，请重新录入" : "尚未录入人脸")
                 + (!state.storageAvailable ? "\n数据无法读取，已安全停用，请检查或重新录入" : "")
                 + (state.lockoutUntil > System.currentTimeMillis() ? "\n多次识别失败，请稍后重试或输入 PIN" : "")

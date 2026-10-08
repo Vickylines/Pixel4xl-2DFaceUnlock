@@ -9,8 +9,18 @@ import com.google.mlkit.vision.face.FaceLandmark;
 import java.util.List;
 
 /** Adapts ML Kit and CameraX measurements into the Android-independent recognition core. */
-final class FaceFrameExtractor {
+final class FaceFrameExtractor implements AutoCloseable {
     private final LbpDescriptor.Workspace workspace = new LbpDescriptor.Workspace();
+    private final AlignedRgbSampler rgb = new AlignedRgbSampler();
+    private MobileFaceEmbedder embedder;
+
+    void initialize(android.content.Context context, boolean neural) throws java.io.IOException {
+        if (neural) embedder = new MobileFaceEmbedder(context);
+    }
+
+    @Override public void close() {
+        if (embedder != null) { embedder.close(); embedder = null; }
+    }
 
     Result extract(ImageProxy frame, int rotation, List<Face> faces) {
         if (faces == null || faces.size() != 1) {
@@ -56,6 +66,28 @@ final class FaceFrameExtractor {
                 mouthRight.x, mouthRight.y, mouthBottom.x, mouthBottom.y);
         if (geometry == null) return new Result(FrameQualityPolicy.Reason.INVALID_DESCRIPTOR,
                 sample, null, null);
+        if (embedder != null) {
+            PointF firstEye = left.x < right.x ? left : right;
+            PointF secondEye = left.x < right.x ? right : left;
+            PointF firstMouth = mouthLeft.x < mouthRight.x ? mouthLeft : mouthRight;
+            PointF secondMouth = mouthLeft.x < mouthRight.x ? mouthRight : mouthLeft;
+            FaceAlignment alignment = FaceAlignment.fit(new float[]{firstEye.x, firstEye.y,
+                    secondEye.x, secondEye.y, nose.x, nose.y, firstMouth.x, firstMouth.y,
+                    secondMouth.x, secondMouth.y});
+            ImageProxy.PlaneProxy[] planes = frame.getPlanes();
+            if (planes == null || planes.length != 3) return new Result(
+                    FrameQualityPolicy.Reason.INVALID_DESCRIPTOR, sample, null, null);
+            rgb.sample(planes[0].getBuffer(), planes[0].getRowStride(), planes[0].getPixelStride(),
+                    planes[1].getBuffer(), planes[1].getRowStride(), planes[1].getPixelStride(),
+                    planes[2].getBuffer(), planes[2].getRowStride(), planes[2].getPixelStride(),
+                    frame.getWidth(), frame.getHeight(), rotation, alignment, embedder.input);
+            sample = new FrameQualityPolicy.Sample(1, leftProbability, rightProbability,
+                    leftContour, rightContour, sample.yaw, sample.pitch, sample.roll, size,
+                    offsetX, offsetY, rgb.brightness, rgb.contrast, rgb.sharpness);
+            FrameQualityPolicy.Reason reason = FrameQualityPolicy.problem(sample);
+            return new Result(reason, sample, reason == FrameQualityPolicy.Reason.NONE
+                    ? embedder.embed() : null, geometry);
+        }
         float[] texture = workspace.compute(frame, rotation, crop, left, right);
         sample = new FrameQualityPolicy.Sample(1, leftProbability, rightProbability,
                 leftContour, rightContour, sample.yaw, sample.pitch, sample.roll, size,

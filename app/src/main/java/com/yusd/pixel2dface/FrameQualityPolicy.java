@@ -25,7 +25,7 @@ final class FrameQualityPolicy {
         INVALID_DESCRIPTOR("请让完整面部正对屏幕"),
         STALE_SESSION("识别会话已结束"), STALE_FRAME("画面已过期，请保持手机稳定"),
         INVALID_TIME("画面时间无效，请重试"),
-        IDENTITY_MISMATCH("纹理或脸型未匹配，请自然正视屏幕");
+        IDENTITY_MISMATCH("人脸未匹配，请自然正视屏幕");
 
         final String message;
         Reason(String message) { this.message = message; }
