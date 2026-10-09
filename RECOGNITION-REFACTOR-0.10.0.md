@@ -1,6 +1,6 @@
-# 0.10.0 识别后端重构（本地候选版）
+# 0.10.0 识别后端重构（预发布候选版）
 
-日期：2026-10-08。基线：`ad8dd75` / `0.9.3-refactor`。本次修改与候选 APK 保留在本地，未推送或发布 GitHub Release，经用户授权继续完成后，手机已覆盖安装 0.10.0 候选正式模块。
+实现与实测日期：2026-10-08–09。基线：`ad8dd75` / `0.9.3-refactor`。经用户授权，手机已覆盖安装 0.10.0 候选正式模块；随后按用户“发布”指令，以 `v0.10.0-candidate` 预发布分发同一实测 APK。0.9.3 保留为稳定版。
 
 ## 本次解决的问题
 
@@ -16,7 +16,7 @@
 | [Android-MobileFaceNet-MTCNN-FaceAntiSpoofing](https://github.com/syaringan357/Android-MobileFaceNet-MTCNN-FaceAntiSpoofing) | 使用固定 commit 的 `MobileFaceNet.tflite`；核对 RGB 输入归一化及 192 维输出。保留上游 MIT 许可。未引入其 MTCNN、反欺骗模型或示例认证阈值。 |
 | [OnDevice-Face-Recognition-Android](https://github.com/shubham0204/OnDevice-Face-Recognition-Android) | 参考端侧 embedding 比对的职责划分；单用户锁屏无需向量数据库，未添加。 |
 
-模型来源、版本、SHA-256、原始尺寸和限制记录在 `app/src/main/assets/models/provenance.json`。上游仓库声明 MIT，但这不等于独立确认了训练数据权利或产品级身份认证能力。该模型仅随本地候选包提供，未公开发布。
+模型来源、版本、SHA-256、原始尺寸和限制记录在 `app/src/main/assets/models/provenance.json`。上游仓库声明 MIT，但这不等于独立确认了训练数据权利或产品级身份认证能力。候选包保留上游许可；发布没有改变模型、安装包签名或之前记录的 APK 哈希。已实测 APK 内的 provenance 文本仍含发布前的本地候选标签，源文件已补充本次公开预发布状态。
 
 ## 新识别路径
 
@@ -79,4 +79,4 @@
 - 熄屏中断测试释放相机并撤销会话。临时将本应用 Camera AppOps 设为 ignore 后，约 12 秒超时返回失败，保持锁屏并解除宿主遮挡；随后恢复原 allow 模式与原 UID foreground 限制。重新亮屏已看到新的相机 client/首帧，证明失败后可重新采集。一次过短的 2 秒探针提前取消了启动，已改为等待实际相机证据后验证。
 - 两个测试 APK 已卸载，验证版应用及其数据保留备用。最终状态：手机熄屏、锁屏仍显示、无活跃相机 client、正式模块启用。
 
-本地证据：`test-artifacts/device-production-regression.txt`、`enrollment-transfer-qa.json`、`production-systemui-final.log`、`production-failure-smoke.json`、`qa-0.10.0.json`。未推送或发布 GitHub Release。
+本地证据：`test-artifacts/device-production-regression.txt`、`enrollment-transfer-qa.json`、`production-systemui-final.log`、`production-failure-smoke.json`、`qa-0.10.0.json`。证据目录、设备 APK 备份和人脸配置留在本地，未进入 Git 或 Release。公开说明见 `dist/RELEASE-NOTES-0.10.0.md`。

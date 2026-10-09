@@ -1,23 +1,36 @@
 Pixel 2D Face Unlock 0.10.0-candidate
-本地候选版，已安装本机，未发布到 GitHub。
+2026-10-09 · 预发布候选版
 
-目前使用的是正式包 com.yusd.pixel2dface，versionCode 24。原模块作用域与设置保留。
-经用户授权，已把验证版里确认成功的人脸模板迁入正式包，无需再次录入。
-验证版应用保留备用；两个测试辅助 APK 已卸载。
+适用：已 Root、已安装 LSPosed 的 Google Pixel arm64 设备；仅 Pixel 4 XL / Android 16 真机验证。
+普通 RGB 2D 人脸仅用于便利解锁；异人拒绝、低光和照片/视频防伪尚未验证。
 
-已验证：154 项 JVM 测试、326 项正式包设备断言；一次日志确认的真实锁屏认证与退出；
-熄屏取消、相机不可用超时、相机权限恢复后的重新采集；Provider 拒绝非 SystemUI 调用。
-最终手机已熄屏、保持锁定、相机已释放。统计识别率、异人拒绝、低光和照片/视频防伪尚未验证。
+一、安装正式模块
+1. 升级前保留旧 APK 和应用私有配置备份，并确认知道设备 PIN/密码。
+2. 下载 Pixel2DFaceUnlock-coral-0.10.0-candidate.apk，覆盖安装原模块，不卸载旧版。
+   此 Release APK 与之前公开升级包沿用同一证书；不要使用 GitHub Actions 的 CI APK 覆盖升级。
+3. LSPosed 作用域只选择系统界面 com.android.systemui；重启 SystemUI 或手机以加载新模块。
+   重启后的首次解锁使用 PIN/密码，再按系统允许的弱生物识别策略使用人脸。
+4. 打开正式“2D 人脸”应用，允许相机权限。已有有效 v3 模板会保留并继续使用旧识别算法。
+5. 若要启用新 MobileFaceNet 算法，在正式应用中点“录入人脸”，再点“测试识别”，
+   随后亲自测试锁屏解锁。新录入会原子替换为 v4 模板；无法把旧纹理特征自动转换为新特征。
 
-文件：
-- Pixel2DFaceUnlock-coral-0.10.0-candidate.apk：已安装的完整模块。
-- Pixel2DFaceUnlock-0.10.0-validation.apk：独立验证包，不接管锁屏。
+二、独立验证包（可选）
+Pixel2DFaceUnlock-0.10.0-validation.apk 的名称为“2D 人脸 · 验证版”，
+包名 com.yusd.pixel2dface.validation。它可与正式模块共存，独立录入和主动测试，不接管锁屏。
+验证包中的人脸不会自动迁入正式模块。普通用户需在正式应用中重新录入。
+
+三、回退与维护
+v4 模板不兼容旧版 APK。切勿在没有旧配置备份的情况下直接降级到 0.9.3。
+仓库 tools/restore_legacy_enrollment.py 是本次维护设备的恢复工具，需要本地原配置备份、
+manifest.json 和同签名维护测试 APK；Release 不包含这些私有材料，不能作为通用一键回退。
+本次设备已备份原 v3 身份并成功迁入验证版 v4；恢复事务经合成数据设备测试，未对实际手机回退。
+
+四、文件与验证范围
+- Pixel2DFaceUnlock-coral-0.10.0-candidate.apk：正式模块，versionCode 24。
+- Pixel2DFaceUnlock-0.10.0-validation.apk：独立验证包。
 - SHA256SUMS-0.10.0.txt：两个 APK 的 SHA-256。
+- RELEASE-NOTES-0.10.0.md：变更、实测结果和适配边界。
 
-如需恢复原识别算法，在仓库目录运行：
-python tools/restore_legacy_enrollment.py --apply
-默认不带 --apply 只校验回退材料。该工具通过同签名维护 APK 和原子存储事务恢复原 v3 身份，
-保留当前设置并撤销旧授权，不降级 APK。回退方法已经过合成数据设备测试，未对本机实际回退。
-本地回退材料保存在 device-backups/20261008-before-full-install/ 与 test-artifacts/，均未纳入 Git。
-
-更多来源、实现与实测记录见 RECOGNITION-REFACTOR-0.10.0.md。
+已通过 154 项 JVM 测试、326 项正式包设备断言、一次日志确认的完整锁屏退出，
+以及熄屏取消、相机故障超时和权限恢复后重新采集。此为单机单用户结果。
+完整记录：RECOGNITION-REFACTOR-0.10.0.md。

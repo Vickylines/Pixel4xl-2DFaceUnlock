@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel4xl-2DFaceUnlock)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> 本地开发分支已增加 **0.10.0-candidate**：可替换识别后端、离线 MobileFaceNet、v4 模板与独立验证包。现有 v3 模板保持兼容；需要重新录入才能使用新引擎。此候选版已安装到本机，完成一次由设备日志确认的完整锁屏认证与退出，以及熄屏/相机不可用/失败恢复回归；尚未公开发布，也未做异人或防伪验证。参见 [本次重构与验证记录](RECOGNITION-REFACTOR-0.10.0.md)。
+> **[0.10.0-candidate 预发布](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.10.0-candidate)**：可替换识别后端、离线 MobileFaceNet、v4 模板与独立验证包。覆盖升级保留 v3 模板和原算法；在正式应用中重新录入后使用新引擎。Pixel 4 XL / Android 16 已记录一次完整锁屏认证与退出，以及熄屏、相机不可用和失败恢复回归；异人拒绝与防伪尚未验证。稳定版仍为 0.9.3。参见 [本次重构与验证记录](RECOGNITION-REFACTOR-0.10.0.md)。
 
 这是一个面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL 便利解锁模块。已发布的稳定基线为 0.9.3：在保留 v3 人脸模板、纹理与几何双信号门槛的基础上，拆分相机、识别、存储与 SystemUI 会话职责，修复失败退出与上滑流程，并减少相机启动前的固定等待、IPC 和模板重复读取。
 
@@ -14,6 +14,7 @@
 
 ## 下载
 
+- [下载 0.10.0 候选模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.0-candidate/Pixel2DFaceUnlock-coral-0.10.0-candidate.apk) · [独立验证包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.0-candidate/Pixel2DFaceUnlock-0.10.0-validation.apk) · [候选版安装说明](dist/INSTALL-ZH-0.10.0.txt) · [SHA-256 校验](dist/SHA256SUMS-0.10.0.txt)
 - [下载 0.9.3 APK](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.9.3/Pixel2DFaceUnlock-coral-0.9.3-refactor.apk) · [发布说明](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.9.3) · [SHA-256 校验](dist/SHA256SUMS-0.9.3.txt)
 - [完整中文安装说明](dist/Pixel_2D人脸解锁_安装使用说明.txt)
 - [下载 0.8.1 安装包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.8.1/Pixel2DFaceUnlock-coral-0.8.1-safety-speed.apk) · [发布说明](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.8.1) · [安全与速度验证报告](SAFETY-SPEED-REPORT.md)。

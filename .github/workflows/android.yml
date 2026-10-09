@@ -28,6 +28,9 @@ jobs:
       - name: Build and lint
         run: ./gradlew :app:testDebugUnitTest :app:assembleRelease :app:lintRelease :app:assembleDebugAndroidTest --no-daemon
 
+      - name: Build standalone validation app and device tests
+        run: ./gradlew :app:assembleValidation :app:assembleValidationAndroidTest -Pvalidation --no-daemon
+
       - name: Upload CI APK (CI certificate, use GitHub Release for upgrades)
         uses: actions/upload-artifact@v4
         with:

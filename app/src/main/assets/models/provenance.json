@@ -11,5 +11,6 @@
   "input": {"shape": [2, 112, 112, 3], "type": "float32", "channels": "RGB", "normalization": "(channel - 127.5) / 128"},
   "output": {"shape": [2, 192], "type": "float32", "postprocessing": "L2 normalization"},
   "batchPolicy": "Two copies of the same aligned face; only the first embedding is used. Fixed internal graph reshapes prohibit batch=1.",
-  "limitations": "Research/demo weights; no product biometric accuracy or presentation-attack certification. Repository license does not establish separate training-data rights. Local candidate only, not a public release."
+  "limitations": "Research/demo weights; no product biometric accuracy or presentation-attack certification. Repository license does not establish separate training-data rights.",
+  "releaseStatus": "Public prerelease v0.10.0-candidate. The unchanged device-verified APK contains the original pre-publication local-candidate label; model bytes and their SHA-256 are unchanged."
 }
