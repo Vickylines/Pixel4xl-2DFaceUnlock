@@ -1,4 +1,10 @@
-# 0.10.0 候选版补充
+# 0.10.1 锁屏启动补充
+
+`UnlockFaceCaptureActivity` 在 Manifest 声明 `showWhenLocked`，并在主线程 `onCreate` 中先检查模式和 token 形状、准备 `1×1 / alpha=0`、不可触摸且不可聚焦的宿主窗口，防止异步模型初始化期间被 Keyguard 停止。该阶段不消费结果、不发就绪通知、不唤醒屏幕，也不开相机。分析线程消费私有一次性启动授权并加载身份，主线程复核实际锁屏和电源状态后，才调用 `UnlockCameraHost.attach()` 注册接收器、通知就绪并启动相机。授权失败、超时、停止和销毁仍统一关闭并释放宿主标志。详见 [修复与设备验证](LOCKSCREEN-FIX-0.10.1.md)。
+
+Xposed 的 `xposed_init` 移到 `app/src/module/assets`，仅 debug/release 构建包含；validation Manifest 移除 `xposedmodule`、`xposeddescription`、`xposedminversion`。仅把 `xposedmodule` 设为 false 不足以阻止部分 LSPosed 版本发现模块。设备测试直接检查安装包元数据和资源，正式包必须存在、验证包必须缺失。
+
+## 0.10.0 识别后端
 
 新识别后端、v4 模板、LiteRT 生命周期及独立验证包见 [0.10.0 重构说明](RECOGNITION-REFACTOR-0.10.0.md)。下文为 0.9.3 基线说明；其中 LBP 门槛和 v3 编码约束只适用于旧模板后端。
 
@@ -88,7 +94,7 @@ Java 源码位于 `app/src/main/java/com/yusd/pixel2dface/`。
 - 睁眼门禁是被动质量判断，不是眨眼挑战或防照片/屏幕/面具攻击的证明。该实现不获得 Android 强生物识别等级。
 - `SystemUiCompat` 调用明确 weak 的原生契约，检查 Android 生物识别锁定、StrongAuth、设备策略、SIM 与所选用户。不能通过修改 strong 标志、跳过原生许可或直接强制解锁扩大能力。
 - 反射目标、字段布局或许可查询不兼容时保持锁定；源码启用条件为 Pixel、API 29–36，不能由此推断所有版本或 ROM 已通过验证。
-- Provider 不返回模板；仅允许本应用 UID，或经过系统包与平台签名检查的 SystemUI UID。导出的锁屏 Activity 必须先消费启动授权，才附加宿主和开启相机。
+- Provider 不返回模板；仅允许本应用 UID，或经过系统包与平台签名检查的 SystemUI UID。0.10.1 导出的锁屏 Activity 只提前准备透明窗口；必须先消费启动授权，才能附加受授权宿主、发就绪通知和开启相机。
 - 启动授权绑定 boot count、墙钟与 elapsed 时间，最长 15 秒，成功消费前必须持久删除。结果票绑定 token、用户、generation，最长 18 秒，消费与交付各限一次。
 - 熄屏、用户切换、配置变更、StrongAuth/设备策略事件会撤销会话；视觉反馈或宿主 ready 广播不能授予认证。清理本模块插入的状态时保留后来由 Android 写入的原生认证值。
 - 待上滑时 `isDeviceLocked=false` 不代表锁屏已退出；同时确认 `isKeyguardLocked=false` 才因退出撤销认证。唤醒未就绪只在同代次的 1.5 秒窗口内重试，进入准备后仅允许一轮配置 IPC 和启动。

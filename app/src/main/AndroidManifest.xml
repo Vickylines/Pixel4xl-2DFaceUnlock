@@ -62,6 +62,7 @@
             android:name=".UnlockFaceCaptureActivity"
             android:excludeFromRecents="true"
             android:exported="true"
+            android:showWhenLocked="true"
             android:taskAffinity="${applicationId}.capture"
             android:theme="@style/Theme.Pixel2DFace.Capture" />
 

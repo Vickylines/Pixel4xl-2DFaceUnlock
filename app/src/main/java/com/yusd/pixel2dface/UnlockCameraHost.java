@@ -17,7 +17,7 @@ import android.view.WindowManager;
 import android.widget.FrameLayout;
 import androidx.core.content.ContextCompat;
 
-/** Transparent camera host protocol. Only attach after consuming the private session grant. */
+/** Prepare an inert lockscreen window early; attach only after consuming the private grant. */
 final class UnlockCameraHost {
     private final Activity activity;
     private final String token;
@@ -26,6 +26,8 @@ final class UnlockCameraHost {
     private BroadcastReceiver receiver;
     private BroadcastReceiver cancelReceiver;
     private boolean closed;
+    private boolean prepared;
+    private boolean attached;
     private int readyAttempts;
     private final Runnable exitWatcher = new Runnable() {
         @Override public void run() {
@@ -42,9 +44,11 @@ final class UnlockCameraHost {
         this.activity = activity; this.token = token; this.dismiss = dismiss;
     }
 
-    void attach() {
+    /** No camera, wake-up, receiver registration or ready signal is authorized here. */
+    void prepareWindow() {
+        if (closed || prepared) return;
+        prepared = true;
         activity.setShowWhenLocked(true);
-        activity.setTurnScreenOn(true);
         activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE
                 | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
                 | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
@@ -61,6 +65,13 @@ final class UnlockCameraHost {
         attributes.x = 0; attributes.y = 0; attributes.dimAmount = 0; attributes.alpha = 0;
         activity.getWindow().setAttributes(attributes);
         activity.getWindow().setLayout(1, 1);
+    }
+
+    void attach() {
+        if (closed || attached) return;
+        prepareWindow();
+        attached = true;
+        activity.setTurnScreenOn(true);
         receiver = new BroadcastReceiver() {
             @Override public void onReceive(Context context, Intent intent) { dismiss.run(); }
         };

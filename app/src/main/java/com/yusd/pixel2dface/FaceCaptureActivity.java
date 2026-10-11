@@ -65,6 +65,15 @@ public class FaceCaptureActivity extends ComponentActivity {
         }
         sessionToken = getIntent().getStringExtra(Constants.EXTRA_SESSION_TOKEN);
         android.util.Log.i("Pixel2DFace", "Capture created mode=" + mode);
+        if (isUnlock()) {
+            if (!UnlockSessionPolicy.validToken(sessionToken)) { finish(); return; }
+            // Keyguard may stop an ordinary Activity before asynchronous template/model
+            // loading completes. Establish only the inert window now; camera access and
+            // the host-ready signal still require consuming the private launch grant.
+            host = new UnlockCameraHost(this, sessionToken, this::finishHost);
+            host.prepareWindow();
+            android.util.Log.i("Pixel2DFace", "Capture lockscreen window prepared");
+        }
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() { finishFailure(false, "已取消"); }
         });
@@ -144,7 +153,6 @@ public class FaceCaptureActivity extends ComponentActivity {
                         KeyguardManager keyguard = getSystemService(KeyguardManager.class);
                         if (power == null || !power.isInteractive() || keyguard == null
                                 || !keyguard.isDeviceLocked()) { finishHost("inactive_at_start"); return; }
-                        host = new UnlockCameraHost(this, sessionToken, this::finishHost);
                         host.attach();
                         android.util.Log.i("Pixel2DFace", "Capture host attached");
                     }

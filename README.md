@@ -4,16 +4,17 @@
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel4xl-2DFaceUnlock)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **[0.10.0-candidate 预发布](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.10.0-candidate)**：可替换识别后端、离线 MobileFaceNet、v4 模板与独立验证包。覆盖升级保留 v3 模板和原算法；在正式应用中重新录入后使用新引擎。Pixel 4 XL / Android 16 已记录一次完整锁屏认证与退出，以及熄屏、相机不可用和失败恢复回归；异人拒绝与防伪尚未验证。稳定版仍为 0.9.3。参见 [本次重构与验证记录](RECOGNITION-REFACTOR-0.10.0.md)。
+> **[0.10.1 正式发行版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.10.1)**：修复应用内能识别、锁屏冷启动却退出的问题；独立验证包移除全部 LSPosed 发现入口，避免误启用。覆盖升级保留已有 v3/v4 人脸与设置。Pixel 4 XL / Android 16 已确认完整锁屏认证、上滑进入桌面及相机释放，详见 [修复与实测记录](LOCKSCREEN-FIX-0.10.1.md)。
 
-这是一个面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL 便利解锁模块。已发布的稳定基线为 0.9.3：在保留 v3 人脸模板、纹理与几何双信号门槛的基础上，拆分相机、识别、存储与 SystemUI 会话职责，修复失败退出与上滑流程，并减少相机启动前的固定等待、IPC 和模板重复读取。
+这是一个面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL 便利解锁模块。当前正式版 0.10.1 支持离线 MobileFaceNet 与 v4 模板，已有 v3 模板继续使用纹理与几何双信号后端。相机、识别、存储与 SystemUI 会话分开管理；识别与一次性授权、系统弱认证策略及锁屏退出分别复核。
 
-本次重构的设计见 [架构说明](ARCHITECTURE.md)，实际验证与尚未覆盖的场景见 [重构验证报告](REFACTOR-REPORT.md)。0.9.0–0.9.2 是本地验证迭代，合并后的安装包随 0.9.3 发布。
+设计见 [架构说明](ARCHITECTURE.md)，新后端来源与边界见 [0.10.0 重构记录](RECOGNITION-REFACTOR-0.10.0.md)。旧版重构证据保留在 [0.9.3 验证报告](REFACTOR-REPORT.md)。
 
 > 本项目不是 Google、LineageOS、Magisk 或 LSPosed 的官方项目。普通 RGB 2D 人脸可能被照片或视频绕过，只适合便利解锁。
 
 ## 下载
 
+- [下载 0.10.1 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.1/Pixel2DFaceUnlock-coral-0.10.1.apk) · [独立验证包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.1/Pixel2DFaceUnlock-0.10.1-validation.apk) · [中文安装说明](dist/INSTALL-ZH-0.10.1.txt) · [SHA-256 校验](dist/SHA256SUMS-0.10.1.txt)
 - [下载 0.10.0 候选模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.0-candidate/Pixel2DFaceUnlock-coral-0.10.0-candidate.apk) · [独立验证包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.0-candidate/Pixel2DFaceUnlock-0.10.0-validation.apk) · [候选版安装说明](dist/INSTALL-ZH-0.10.0.txt) · [SHA-256 校验](dist/SHA256SUMS-0.10.0.txt)
 - [下载 0.9.3 APK](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.9.3/Pixel2DFaceUnlock-coral-0.9.3-refactor.apk) · [发布说明](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.9.3) · [SHA-256 校验](dist/SHA256SUMS-0.9.3.txt)
 - [完整中文安装说明](dist/Pixel_2D人脸解锁_安装使用说明.txt)
@@ -105,7 +106,9 @@
 2. 在 LSPosed 中启用本模块，作用域只选择“系统界面”。
 3. 重启手机或重启 SystemUI；重启后的第一次解锁先输入 PIN。
 4. 打开“Pixel 2D 人脸解锁”，确认“LSPosed 钩子已加载”，并查看下面的运行时适配报告。
-5. 0.8.x / 0.9.x 的有效 v3 模板无需重新录入；从 0.7.x 或更早版本升级时，按提示重新录入一次以建立 v3 双信号模板。自然看向屏幕即可，不要求眨眼或转头。
+5. 已有有效 v3/v4 模板无需重新录入；从 0.7.x 或更早版本升级时，按提示重新录入一次以建立 v4 模板。自然看向屏幕即可，不要求眨眼或转头。
+
+0.10.1 会保留已有 v3/v4 模板；新录入建立 MobileFaceNet v4 模板。验证版拥有独立数据，不能替代正式模块，也不会把录入自动同步到正式模块。升级验证包后它不再作为 LSPosed 模块显示；请确认启用的是正式包 `com.yusd.pixel2dface`，作用域只选系统界面。
 
 ## 安全说明
 

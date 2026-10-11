@@ -12,3 +12,5 @@
 
 GitHub CI 的 APK 供构建检查使用，签名取决于 CI 环境。公开升级包应核对既有签名、版本、SHA-256 和实际覆盖安装结果；不要将 CI 产物直接当作已验收的升级包。实现边界见 [架构说明](ARCHITECTURE.md)，已有设备证据见 [重构报告](REFACTOR-REPORT.md)。
 
+修改构建变体或模块声明时，同时构建 `:app:assembleValidation :app:assembleValidationAndroidTest -Pvalidation`，并分别运行正式包和验证包设备测试。`xposed_init` 只放在 `app/src/module/assets`，不要恢复到所有变体共用的 main 资源；验证包不应含任何 Xposed 模块发现元数据。
+

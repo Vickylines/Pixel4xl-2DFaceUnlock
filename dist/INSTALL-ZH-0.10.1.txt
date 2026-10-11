@@ -1,0 +1,37 @@
+Pixel 2D Face Unlock 0.10.1
+2026-10-11 · 正式发行版
+
+适用：已 Root、已安装 LSPosed 的 Google Pixel arm64 设备；本版仅 Pixel 4 XL / Android 16 真机验证。
+普通 RGB 2D 人脸仅用于便利解锁；异人拒绝、低光和照片/视频防伪尚未验证。
+
+一、升级正式模块
+1. 保留旧 APK 和私有配置备份，确认自己知道设备 PIN/密码。
+2. 下载 Pixel2DFaceUnlock-coral-0.10.1.apk，直接覆盖安装，不卸载旧版。
+   本 Release APK 沿用既有安装证书；不要使用 GitHub Actions 的 CI APK 覆盖升级。
+3. LSPosed 启用正式包 com.yusd.pixel2dface，作用域只选系统界面 com.android.systemui。
+   验证包不能接管锁屏，不要用它替代正式包。升级后的验证包不再显示为 LSPosed 模块。
+4. 重启 SystemUI 或手机使新钩子生效；系统如要求强认证，先输入一次 PIN/密码。
+5. 打开正式“2D 人脸”应用并允许相机权限，确认钩子已加载。
+6. 原有效 v3/v4 模板和设置会保留，无需重录；没有有效模板时在正式应用录入，再测试识别。
+   新录入建立 MobileFaceNet v4 模板；旧 v3 模板继续使用原识别后端。
+7. 正常熄屏再亮屏，正视镜头自然睁眼，成功后从普通锁屏向上滑进入桌面。
+   重启、锁定模式或系统要求强认证时，人脸不能代替 PIN/密码。
+
+二、独立验证包（可选）
+Pixel2DFaceUnlock-0.10.1-validation.apk 对应“2D 人脸 · 验证版”，
+包名 com.yusd.pixel2dface.validation，可与正式模块共存，只用于独立录入和主动测试。
+新版已移除全部 Xposed 模块发现元数据及入口资源。验证版的人脸不会自动同步到正式模块。
+
+三、回退与维护
+v4 模板不兼容 0.9.3 等旧 APK；请勿在没有旧配置备份的情况下直接降级。
+tools/restore_legacy_enrollment.py 仅供有原始私有备份和同签名维护 APK 的设备恢复，
+不是通用一键回退。Release 不包含人脸数据、私有备份、签名密钥或维护测试 APK。
+
+四、文件
+- Pixel2DFaceUnlock-coral-0.10.1.apk：正式模块，versionCode 25，非 debuggable。
+- Pixel2DFaceUnlock-0.10.1-validation.apk：独立验证包，versionCode 25。
+- SHA256SUMS-0.10.1.txt：两个 APK 的 SHA-256。
+- RELEASE-NOTES-0.10.1.md：变更、实测结果和适配边界。
+
+154 项 JVM 测试、正式/验证各 329 次设备断言通过。三轮强停后冷启动均取得首帧并在熄屏后释放相机。
+真人锁屏识别、系统认证复核、上滑进入桌面已由设备日志和用户确认；其余边界见 LOCKSCREEN-FIX-0.10.1.md。

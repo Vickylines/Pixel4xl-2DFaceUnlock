@@ -10,8 +10,8 @@ android {
         applicationId "com.yusd.pixel2dface"
         minSdk 29
         targetSdk 36
-        versionCode 24
-        versionName "0.10.0-candidate"
+        versionCode 25
+        versionName "0.10.1"
         manifestPlaceholders = [isXposedModule: "true"]
         testInstrumentationRunner project.hasProperty("provisioning")
                 ? "com.yusd.pixel2dface.EnrollmentTransferInstrumentation"
@@ -28,6 +28,12 @@ android {
 
     buildFeatures {
         buildConfig true
+    }
+
+    // The standalone validator must not be discoverable as an LSPosed module.
+    sourceSets {
+        debug.assets.srcDir "src/module/assets"
+        release.assets.srcDir "src/module/assets"
     }
 
     buildTypes {

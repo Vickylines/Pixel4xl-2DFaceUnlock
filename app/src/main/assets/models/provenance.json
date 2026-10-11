@@ -12,5 +12,5 @@
   "output": {"shape": [2, 192], "type": "float32", "postprocessing": "L2 normalization"},
   "batchPolicy": "Two copies of the same aligned face; only the first embedding is used. Fixed internal graph reshapes prohibit batch=1.",
   "limitations": "Research/demo weights; no product biometric accuracy or presentation-attack certification. Repository license does not establish separate training-data rights.",
-  "releaseStatus": "Public prerelease v0.10.0-candidate. The unchanged device-verified APK contains the original pre-publication local-candidate label; model bytes and their SHA-256 are unchanged."
+  "releaseStatus": "Release packaging v0.10.1; model bytes and their SHA-256 are unchanged from v0.10.0-candidate. See release notes for device verification scope."
 }

@@ -38,6 +38,7 @@ public final class StorageInstrumentation extends Instrumentation {
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            packageIsolation();
             Context context = isolatedContext();
             roundTripAndConcurrentUpdates(context);
             atomicRecovery(context);
@@ -65,6 +66,19 @@ public final class StorageInstrumentation extends Instrumentation {
             cleanup();
             finish(Activity.RESULT_CANCELED, result);
         }
+    }
+
+    private void packageIsolation() throws Exception {
+        Context target = getTargetContext();
+        boolean validation = target.getPackageName().endsWith(".validation");
+        ApplicationInfo info = target.getPackageManager().getApplicationInfo(
+                target.getPackageName(), android.content.pm.PackageManager.GET_META_DATA);
+        boolean declared = info.metaData != null && info.metaData.getBoolean("xposedmodule", false);
+        check(declared == !validation, "only the production package declares an Xposed module");
+        boolean discoverable = info.metaData != null && info.metaData.containsKey("xposedminversion");
+        check(discoverable == !validation, "validator has no legacy module discovery metadata");
+        boolean entry = java.util.Arrays.asList(target.getAssets().list("")).contains("xposed_init");
+        check(entry == !validation, "validator has no Xposed entry asset");
     }
 
     private Context isolatedContext() {
