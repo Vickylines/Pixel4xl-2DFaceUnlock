@@ -29,6 +29,7 @@ public class FaceCaptureActivity extends ComponentActivity {
     private static final long ENROLLMENT_TIMEOUT_MS = 45_000;
     private final AtomicBoolean finished = new AtomicBoolean();
     private final AtomicBoolean outcomeLogged = new AtomicBoolean();
+    private final DeviceCredentialConfirmation credentials = new DeviceCredentialConfirmation(this);
     private final Map<String, Integer> frameOutcomes = new LinkedHashMap<>();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final FaceFrameExtractor extractor = new FaceFrameExtractor();
@@ -85,9 +86,26 @@ public class FaceCaptureActivity extends ComponentActivity {
             content = new CaptureContentView(this, isEnrollment(), () -> finishFailure(false, "已取消"));
             setContentView(content);
         }
+        if (isEnrollment()) {
+            // Never restore an enrollment's authorization after process death or recreation.
+            if (savedInstanceState != null) { finishFailure(false, "请重新开始录入"); return; }
+            credentials.request("确认录入人脸", this::requestCamera,
+                    () -> finishFailure(false, "身份确认已取消"));
+        } else {
+            requestCamera();
+        }
+    }
+
+    private void requestCamera() {
+        if (finished.get()) return;
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) initialize();
         else if (isUnlock()) finishFailure(false, "未授予相机权限");
         else requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA);
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        credentials.onActivityResult(requestCode, resultCode);
     }
 
     protected boolean isExternalUnlockHost() { return false; }
@@ -182,7 +200,8 @@ public class FaceCaptureActivity extends ComponentActivity {
             return;
         }
         if (frame.reason != FrameQualityPolicy.Reason.NONE) {
-            recordFrameOutcome(frame.reason == FrameQualityPolicy.Reason.EYES_CLOSED
+            recordFrameOutcome((frame.reason == FrameQualityPolicy.Reason.EYES_CLOSED
+                    || frame.reason == FrameQualityPolicy.Reason.EYES_UNAVAILABLE)
                     && frame.sample != null ? "EYE_" + PassiveEyeGate.problem(
                             frame.sample.leftEyeProbability, frame.sample.rightEyeProbability,
                             frame.sample.leftEyeContourRatio, frame.sample.rightEyeContourRatio).name()
@@ -228,14 +247,22 @@ public class FaceCaptureActivity extends ComponentActivity {
         if (decision.votes.confirmed) finishSuccess(decision.votes.meanScore, decision.votes.fastPath);
     }
 
-    /** Runs on the analysis lane; validation and persistence never block the main thread. */
+    /** Chooses the outcome on the analysis lane; all recognition writes share the disk queue. */
     private void finishSuccess(float score, boolean fastPath) {
-        if (finished.get()) return;
-        if (isUnlock() && !TemplateStore.validateAndRecordSuccess(this, settings)) {
-            finishFailure(false, "配置已变更或无法保存，请重新亮屏识别"); return;
-        }
+        // Cancellation and success must choose one outcome before changing failure counters.
         if (!finished.compareAndSet(false, true)) return;
-        publishSuccess(score, fastPath);
+        if (!isUnlock()) {
+            publishSuccess(score, fastPath);
+            return;
+        }
+        // A timeout from the previous capture may still be queued. Preserve outcome order:
+        // it must run before this reset, and a fifth failure must retain its lockout.
+        StoreTasks.execute(() -> {
+            if (!TemplateStore.validateAndRecordSuccess(this, settings)) {
+                publishFailure("配置已变更或无法保存，请重新亮屏识别"); return;
+            }
+            publishSuccess(score, fastPath);
+        });
     }
 
     private void publishSuccess(float score, boolean fastPath) {
@@ -274,7 +301,10 @@ public class FaceCaptureActivity extends ComponentActivity {
 
     private void finishFailure(boolean recordFailure, String message) {
         if (!finished.compareAndSet(false, true)) return;
-        if (recordFailure) StoreTasks.execute(() -> TemplateStore.tryRecordFailure(this));
+        if (recordFailure) {
+            TemplateStore.RecognitionSettings failedSettings = settings;
+            StoreTasks.execute(() -> TemplateStore.validateAndRecordFailure(this, failedSettings));
+        }
         publishFailure(message);
     }
 
@@ -314,6 +344,7 @@ public class FaceCaptureActivity extends ComponentActivity {
         super.onStop();
     }
     @Override protected void onDestroy() {
+        credentials.cancel();
         logOutcome("activity_destroyed");
         finished.set(true); stopCapture();
         if (host != null) host.close();

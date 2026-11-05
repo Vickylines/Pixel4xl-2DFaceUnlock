@@ -40,7 +40,7 @@ final class LegacyStoreMigration {
         if (bytes == null) return properties;
         String source = new String(bytes, StandardCharsets.UTF_8);
         if (source.contains("<!DOCTYPE") || source.contains("<!ENTITY")) {
-            throw new IOException("Legacy declarations are not allowed");
+            throw new AtomicStoreFiles.CorruptDataException("Legacy declarations are not allowed");
         }
         try {
             XmlPullParser parser = Xml.newPullParser();
@@ -51,16 +51,16 @@ final class LegacyStoreMigration {
                 if (event != XmlPullParser.START_TAG) continue;
                 if (!foundRoot) {
                     if (!"map".equals(parser.getName()) || parser.getDepth() != 1) {
-                        throw new IOException("Invalid legacy root");
+                        throw new AtomicStoreFiles.CorruptDataException("Invalid legacy root");
                     }
                     foundRoot = true;
                     continue;
                 }
-                if (parser.getDepth() != 2) throw new IOException("Invalid legacy structure");
+                if (parser.getDepth() != 2) throw new AtomicStoreFiles.CorruptDataException("Invalid legacy structure");
                 String tag = parser.getName();
                 String name = parser.getAttributeValue(null, "name");
                 if (name == null || name.isEmpty() || properties.containsKey(name)) {
-                    throw new IOException("Invalid legacy key");
+                    throw new AtomicStoreFiles.CorruptDataException("Invalid legacy key");
                 }
                 String value;
                 if ("string".equals(tag)) {
@@ -69,15 +69,15 @@ final class LegacyStoreMigration {
                         || "long".equals(tag) || "float".equals(tag)) {
                     value = parser.getAttributeValue(null, "value");
                 } else {
-                    throw new IOException("Unsupported legacy field");
+                    throw new AtomicStoreFiles.CorruptDataException("Unsupported legacy field");
                 }
-                if (value == null) throw new IOException("Missing legacy value");
+                if (value == null) throw new AtomicStoreFiles.CorruptDataException("Missing legacy value");
                 properties.setProperty(name, value);
             }
-            if (!foundRoot) throw new IOException("Missing legacy root");
+            if (!foundRoot) throw new AtomicStoreFiles.CorruptDataException("Missing legacy root");
             return properties;
         } catch (XmlPullParserException | RuntimeException error) {
-            throw new IOException("Invalid legacy store");
+            throw new AtomicStoreFiles.CorruptDataException("Invalid legacy store");
         }
     }
 }

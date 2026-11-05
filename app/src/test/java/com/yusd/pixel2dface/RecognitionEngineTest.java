@@ -39,6 +39,21 @@ public final class RecognitionEngineTest {
         assertFalse(next.votes.confirmed);
     }
 
+    @Test public void unavailableEyesStillRejectTheFrameAndEraseIdentityEvidence() {
+        for (int i = 0; i < 3; i++) frame(i * 33L);
+        FrameQualityPolicy.Sample unavailable = new FrameQualityPolicy.Sample(1, null, .99f,
+                .18f, .18f, 0f, 0f, 0f, .35f, .05f, .05f, 100f, 30f, 8f);
+        RecognitionEngine.Decision rejected = recognize(99L, unavailable, texture(4));
+        assertEquals(FrameQualityPolicy.Reason.EYES_UNAVAILABLE, rejected.reason);
+        assertFalse(rejected.match.accepted);
+        assertFalse(rejected.votes.confirmed);
+        assertEquals(0, rejected.votes.matches);
+        assertEquals(0, rejected.openEyeFrames);
+        RecognitionEngine.Decision next = frame(132L);
+        assertEquals(1, next.votes.matches);
+        assertFalse(next.votes.confirmed);
+    }
+
     @Test public void ordinaryIdentityMissMayOccupyOneFreshVotingSlot() {
         recognize(0L, good(0.75f), texture(4));
         recognize(60L, good(0.75f), texture(4));

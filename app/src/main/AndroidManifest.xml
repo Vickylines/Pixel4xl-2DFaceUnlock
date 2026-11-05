@@ -3,6 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.CAMERA" />
+    <permission
+        android:name="${applicationId}.permission.SEND_SIGNALS"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="${applicationId}.permission.SEND_SIGNALS" />
     <uses-permission
         android:name="android.permission.INTERNET"
         tools:node="remove" />
@@ -62,6 +66,7 @@
             android:name=".UnlockFaceCaptureActivity"
             android:excludeFromRecents="true"
             android:exported="true"
+            android:permission="android.permission.STATUS_BAR_SERVICE"
             android:showWhenLocked="true"
             android:taskAffinity="${applicationId}.capture"
             android:theme="@style/Theme.Pixel2DFace.Capture" />

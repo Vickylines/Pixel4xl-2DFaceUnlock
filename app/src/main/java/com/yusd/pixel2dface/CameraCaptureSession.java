@@ -17,14 +17,13 @@ import androidx.camera.view.PreviewView;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.face.Face;
-import com.google.mlkit.vision.face.FaceDetector;
 
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 
-/** Owns one camera binding, one detector and one serial analysis lane per Activity. */
+/** Owns one camera binding, a two-stage detector and one serial analysis lane per Activity. */
 @androidx.annotation.OptIn(markerClass = androidx.camera.core.ExperimentalGetImage.class)
 final class CameraCaptureSession {
     interface Listener {
@@ -43,7 +42,7 @@ final class CameraCaptureSession {
     private final CaptureSessionGate gate = new CaptureSessionGate();
     private final FrameTimestampNormalizer timestamps = new FrameTimestampNormalizer();
     private final Object detectorLock = new Object();
-    private FaceDetector detector;
+    private SingleFaceDetector detector;
     // CameraX binding and unbinding are confined to the main thread.
     private ProcessCameraProvider provider;
     private ImageAnalysis analysis;
@@ -69,7 +68,7 @@ final class CameraCaptureSession {
     /** Called on the analysis lane after configuration has been loaded. */
     void start(PreviewView previewView) {
         requestedAt = SystemClock.elapsedRealtime();
-        FaceDetector created = FaceDetectorFactory.create();
+        SingleFaceDetector created = FaceDetectorFactory.create(analyzer, gate::isClosing);
         synchronized (detectorLock) {
             if (gate.isClosing()) {
                 created.close();
@@ -127,7 +126,7 @@ final class CameraCaptureSession {
                 return;
             }
             InputImage input = InputImage.fromMediaImage(frame.getImage(), rotation);
-            FaceDetector current;
+            SingleFaceDetector current;
             synchronized (detectorLock) { current = detector; }
             if (current == null || gate.isClosing()) {
                 complete(frame);
@@ -199,7 +198,7 @@ final class CameraCaptureSession {
     }
 
     private void releaseDetector() {
-        FaceDetector released;
+        SingleFaceDetector released;
         synchronized (detectorLock) {
             released = detector;
             detector = null;

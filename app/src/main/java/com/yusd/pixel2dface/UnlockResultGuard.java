@@ -35,6 +35,8 @@ final class UnlockResultGuard {
                 && isCurrent(candidate, now, currentGeneration);
     }
 
+    boolean hasPendingDelivery() { return consumed && !delivered; }
+
     boolean claimDelivery(String candidate, long now, long currentGeneration, int currentUserId) {
         if (!mayDeliver(candidate, now, currentGeneration, currentUserId)) {
             return false;

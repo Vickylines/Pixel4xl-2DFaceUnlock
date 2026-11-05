@@ -25,6 +25,7 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_ENROLL = 100;
     private static final int REQUEST_TEST = 101;
     private static final boolean VALIDATION = "validation".equals(BuildConfig.BUILD_TYPE);
+    private final DeviceCredentialConfirmation credentials = new DeviceCredentialConfirmation(this);
 
     private TextView statusView;
     private Switch enabledSwitch;
@@ -62,6 +63,11 @@ public final class MainActivity extends Activity {
         resumed = false;
         refreshGeneration++;
         super.onPause();
+    }
+
+    @Override protected void onDestroy() {
+        credentials.cancel();
+        super.onDestroy();
     }
 
     private View buildContent() {
@@ -117,7 +123,10 @@ public final class MainActivity extends Activity {
                     buttonView.setChecked(false);
                     rendering = false;
                 } else {
-                    saveSetting(() -> TemplateStore.trySetEnabled(this, checked), null);
+                    rendering = true;
+                    buttonView.setChecked(displayedState.enabled);
+                    rendering = false;
+                    saveProtectedSetting(() -> TemplateStore.trySetEnabled(this, checked), null);
                 }
             }
         });
@@ -173,7 +182,7 @@ public final class MainActivity extends Activity {
                 .setMessage("删除后锁屏人脸解锁会立即停用。")
                 .setNegativeButton("取消", null)
                 .setPositiveButton("删除", (dialog, which) -> {
-                    saveSetting(() -> TemplateStore.tryClearTemplates(this), "人脸数据已删除");
+                    saveProtectedSetting(() -> TemplateStore.tryClearTemplates(this), "人脸数据已删除");
                 })
                 .show());
         actions.addView(deleteButton);
@@ -243,7 +252,7 @@ public final class MainActivity extends Activity {
                 if (!resumed || isFinishing() || isDestroyed() || request != refreshGeneration) return;
                 displayedState = state;
                 renderState(state, heartbeat, compatibility);
-                setControlsEnabled(!saving);
+                setControlsEnabled(!saving && !credentials.isPending());
             });
         });
     }
@@ -294,7 +303,7 @@ public final class MainActivity extends Activity {
     }
 
     private void selectRecognitionProfile(int profile) {
-        saveSetting(() -> TemplateStore.trySetRecognitionProfile(this, profile), null);
+        saveProtectedSetting(() -> TemplateStore.trySetRecognitionProfile(this, profile), null);
     }
 
     private void updateRecognitionProfileControls() {
@@ -323,6 +332,13 @@ public final class MainActivity extends Activity {
         Intent intent = new Intent(this, FaceCaptureActivity.class);
         intent.putExtra(Constants.EXTRA_MODE, mode);
         startActivityForResult(intent, requestCode);
+    }
+
+    private void saveProtectedSetting(BooleanSupplier write, String successMessage) {
+        if (saving || credentials.isPending()) return;
+        setControlsEnabled(false);
+        credentials.request("确认修改人脸解锁设置",
+                () -> saveSetting(write, successMessage), this::refreshState);
     }
 
     private void saveSetting(BooleanSupplier write, String successMessage) {
@@ -360,6 +376,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (credentials.onActivityResult(requestCode, resultCode)) return;
         if (requestCode == REQUEST_ENROLL && resultCode == RESULT_OK) {
             Toast.makeText(this, "人脸录入完成", Toast.LENGTH_LONG).show();
         } else if (requestCode == REQUEST_TEST && data != null) {

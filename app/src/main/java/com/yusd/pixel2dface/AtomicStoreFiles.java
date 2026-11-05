@@ -31,6 +31,11 @@ final class AtomicStoreFiles {
 
     interface Operation<T> { T run(File directory) throws IOException; }
 
+    /** Data is present but cannot be parsed; distinct from an inaccessible disk or file. */
+    static final class CorruptDataException extends IOException {
+        CorruptDataException(String message) { super(message); }
+    }
+
     static <T> T locked(Context context, T fallback, Operation<T> operation) {
         synchronized (PROCESS_LOCK) {
             try {
@@ -70,7 +75,7 @@ final class AtomicStoreFiles {
         try (ByteArrayInputStream input = new ByteArrayInputStream(bytes)) {
             properties.load(input);
         } catch (IllegalArgumentException error) {
-            throw new IOException("Invalid property syntax");
+            throw new CorruptDataException("Invalid property syntax");
         }
         validateProperties(properties);
         Properties mutable = new Properties();
@@ -82,7 +87,7 @@ final class AtomicStoreFiles {
         validateProperties(properties);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         properties.store(bytes, "Pixel 2D Face Unlock");
-        if (bytes.size() > MAX_STORE_BYTES) throw new IOException("Store exceeds size limit");
+        if (bytes.size() > MAX_STORE_BYTES) throw new CorruptDataException("Store exceeds size limit");
         writeBytes(new File(directory, STORE_FILE), bytes.toByteArray());
     }
 
@@ -92,7 +97,7 @@ final class AtomicStoreFiles {
             byte[] buffer = new byte[4096];
             int count;
             while ((count = input.read(buffer)) != -1) {
-                if (bytes.size() > maximum - count) throw new IOException("File exceeds size limit");
+                if (bytes.size() > maximum - count) throw new CorruptDataException("File exceeds size limit");
                 bytes.write(buffer, 0, count);
             }
             return bytes.toByteArray();
@@ -147,16 +152,16 @@ final class AtomicStoreFiles {
     }
 
     private static void validateProperties(Properties properties) throws IOException {
-        if (properties.size() > MAX_PROPERTIES) throw new IOException("Too many properties");
+        if (properties.size() > MAX_PROPERTIES) throw new CorruptDataException("Too many properties");
         for (Object keyObject : properties.keySet()) {
             Object valueObject = properties.get(keyObject);
             if (!(keyObject instanceof String) || !(valueObject instanceof String)) {
-                throw new IOException("Invalid property type");
+                throw new CorruptDataException("Invalid property type");
             }
             String key = (String) keyObject;
             String value = (String) valueObject;
             if (key.isEmpty() || key.length() > 128 || value.length() > MAX_STORE_BYTES) {
-                throw new IOException("Invalid property length");
+                throw new CorruptDataException("Invalid property length");
             }
         }
     }

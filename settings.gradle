@@ -11,7 +11,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven { url = uri("https://api.xposed.info/") }
+        maven { url = uri("https://raw.githubusercontent.com/rovo89/XposedBridge/79f70cf567fdb42f83313f6cad97a6ffc878f3ac/") }
     }
 }
 

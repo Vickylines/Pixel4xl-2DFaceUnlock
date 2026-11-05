@@ -18,7 +18,8 @@ final class FrameQualityPolicy {
     enum Reason {
         NONE(""), NO_FACE("未检测到人脸"), MULTIPLE_FACES("画面中只能有一张人脸"),
         TOO_SMALL("请靠近一点"), OFF_CENTER("请将脸移到画面中央"),
-        EYES_CLOSED("请自然睁眼并看向屏幕"), POSE("请自然正视屏幕"),
+        EYES_CLOSED("请自然睁眼并看向屏幕"),
+        EYES_UNAVAILABLE("请让双眼清晰地出现在画面中"), POSE("请自然正视屏幕"),
         TOO_DARK("光线太暗，请稍微提高屏幕亮度"),
         TOO_BRIGHT("画面过亮，请避开强光"), LOW_CONTRAST("面部光线不足，请面向屏幕"),
         BLURRED("画面不够清晰，请保持手机稳定"), INVALID_SIGNALS("画面数据无效，请重试"),
@@ -82,9 +83,13 @@ final class FrameQualityPolicy {
         if (sample.faceWidthRatio < MIN_FACE_WIDTH_RATIO) return Reason.TOO_SMALL;
         if (sample.centerOffsetX > MAX_CENTER_OFFSET_X
                 || sample.centerOffsetY > MAX_CENTER_OFFSET_Y) return Reason.OFF_CENTER;
-        if (!PassiveEyeGate.areBothEyesOpen(sample.leftEyeProbability,
+        PassiveEyeGate.Problem eyes = PassiveEyeGate.problem(sample.leftEyeProbability,
                 sample.rightEyeProbability, sample.leftEyeContourRatio,
-                sample.rightEyeContourRatio)) return Reason.EYES_CLOSED;
+                sample.rightEyeContourRatio);
+        if (eyes == PassiveEyeGate.Problem.PROBABILITY_REJECTED) return Reason.EYES_CLOSED;
+        // Missing classification/contours reject this frame, but are not continuous
+        // closed-eye evidence for the passive scan's early failure counter.
+        if (eyes != PassiveEyeGate.Problem.NONE) return Reason.EYES_UNAVAILABLE;
         if (Math.abs(sample.yaw) > MAX_ABS_YAW || Math.abs(sample.pitch) > MAX_ABS_PITCH
                 || Math.abs(sample.roll) > MAX_ABS_ROLL) return Reason.POSE;
         return Reason.NONE;

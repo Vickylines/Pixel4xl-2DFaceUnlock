@@ -4,6 +4,36 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public final class PassiveUnlockFailurePolicyTest {
+    @Test public void missingEyeClassificationCannotCountAsPersistentClosedEyes() {
+        assertUnavailableEyesDoNotStop(new FrameQualityPolicy.Sample(1, null, .99f,
+                .18f, .18f, 0f, 0f, 0f, .3f, 0f, 0f, 100f, 30f, 8f));
+    }
+
+    @Test public void missingEyeContoursCannotCountAsPersistentClosedEyes() {
+        assertUnavailableEyesDoNotStop(new FrameQualityPolicy.Sample(1, .99f, .99f,
+                0f, .18f, 0f, 0f, 0f, .3f, 0f, 0f, 100f, 30f, 8f));
+    }
+
+    @Test public void unavailableEyeFrameBreaksClosedEyeContinuity() {
+        PassiveUnlockFailurePolicy policy = new PassiveUnlockFailurePolicy();
+        for (long at = 1_000; at <= 2_250; at += 250) {
+            assertFalse(policy.shouldStop(FrameQualityPolicy.Reason.EYES_CLOSED, at));
+        }
+        FrameQualityPolicy.Sample missing = new FrameQualityPolicy.Sample(1, null, .99f,
+                .18f, .18f, 0f, 0f, 0f, .3f, 0f, 0f, 100f, 30f, 8f);
+        assertFalse(policy.shouldStop(FrameQualityPolicy.problem(missing), 2_400));
+        assertFalse(policy.shouldStop(FrameQualityPolicy.Reason.EYES_CLOSED, 2_500));
+    }
+
+    private static void assertUnavailableEyesDoNotStop(FrameQualityPolicy.Sample sample) {
+        FrameQualityPolicy.Reason reason = FrameQualityPolicy.problem(sample);
+        assertNotEquals(FrameQualityPolicy.Reason.NONE, reason);
+        PassiveUnlockFailurePolicy policy = new PassiveUnlockFailurePolicy();
+        for (long at = 1_000; at <= 3_000; at += 250) {
+            assertFalse(policy.shouldStop(reason, at));
+        }
+    }
+
     @Test public void persistentClosedEyesStopTheScanAfterTheGracePeriod() {
         PassiveUnlockFailurePolicy policy = new PassiveUnlockFailurePolicy();
         for (long at = 1_000; at < 2_500; at += 250) {

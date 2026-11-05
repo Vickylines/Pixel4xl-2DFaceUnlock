@@ -1,0 +1,28 @@
+Pixel 2D Face Unlock 0.10.2
+2026-11-06
+
+适用：已 Root、已安装 LSPosed 的 Google Pixel 4 XL，Android 10–16，arm64。
+
+升级正式模块
+1. 下载 Pixel2DFaceUnlock-coral-0.10.2.apk 直接覆盖安装，保留已有 v3/v4 人脸与设置。
+2. 在 LSPosed 启用 com.yusd.pixel2dface，作用域只选系统界面 com.android.systemui。
+3. 重启 SystemUI 或手机。系统要求强认证时先输入 PIN/密码。
+4. 打开正式“2D 人脸”应用检查加载状态。已有有效模板无需重录。
+5. 录入、修改识别设置和删除模板前，按系统界面完成 PIN、图案或密码确认。
+6. 正常熄屏再亮屏，正视镜头并自然睁眼。普通锁屏识别成功后上滑进入桌面。
+
+独立验证包
+Pixel2DFaceUnlock-0.10.2-validation.apk 的包名为 com.yusd.pixel2dface.validation。
+它可与正式模块共存，用于独立录入和主动测试，不接管锁屏，也不向正式模块同步人脸。
+
+文件与校验
+- 正式模块：versionCode 26，非 debuggable，沿用已有安装证书。
+- 独立验证包：versionCode 26，不含 Xposed 入口。
+- SHA256SUMS-0.10.2.txt：两个安装包的 SHA-256。
+- RELEASE-NOTES-0.10.2.md：变更与验证范围。
+
+198 项 JVM/Robolectric 测试通过，正式包、验证包及设备测试 APK 编译通过。
+本次未在手机上安装或执行锁屏复测。Release Lint 为 0 错误、7 条已有警告。
+请使用本 Release 安装包覆盖升级；GitHub Actions 的 CI 包使用不同证书。
+普通 RGB 2D 人脸只用于便利解锁，系统强认证要求仍需 PIN/密码。
+停用 LSPosed 模块并重启即可恢复原系统锁屏。v4 模板不兼容 0.9.3 等旧 APK。

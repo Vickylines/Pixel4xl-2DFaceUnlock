@@ -31,7 +31,7 @@ final class UnlockSessionState {
         }
         // Native callbacks and screen broadcasts may arrive farther apart than the debounce
         // window. A real sleep resets these states; a late duplicate must not rotate a grant.
-        if (isHostActive(now) || hasPassiveAuthentication(now)
+        if (isHostActive(now) || hasPassiveAuthentication(now) || hasPendingResult(now)
                 || preparingGeneration == generation || readinessPending) {
             return -1L;
         }
@@ -42,13 +42,16 @@ final class UnlockSessionState {
     }
 
     boolean beginPreparation(long expectedGeneration, long now) {
-        if (now < 0L || generation != expectedGeneration || preparingGeneration == generation
-                || isHostActive(now) || hasPassiveAuthentication(now)
+        if (now < 0L || generation != expectedGeneration) return false;
+        // This readiness attempt ends even if cooldown prevents a launch. Leaving it
+        // pending would reject every later wake after the cooldown has already elapsed.
+        readinessPending = false;
+        if (preparingGeneration == generation
+                || isHostActive(now) || hasPassiveAuthentication(now) || hasPendingResult(now)
                 || (lastLaunchAt >= 0L && now >= lastLaunchAt
                 && now - lastLaunchAt < LAUNCH_COOLDOWN_MS)) {
             return false;
         }
-        readinessPending = false;
         preparingGeneration = generation;
         return true;
     }
@@ -152,11 +155,18 @@ final class UnlockSessionState {
 
     void finishHost(String candidate) {
         if (matches(candidate)) {
+            cameraHostActive = false;
+            // The Activity can exit while the consumed success awaits configuration IPC.
+            // Keep only that pending result; delivery and the watchdog still enforce its TTL.
+            if (results.hasPendingDelivery()) return;
             token = null;
             sessionUser = -1;
-            cameraHostActive = false;
             results.clear();
         }
+    }
+
+    private boolean hasPendingResult(long now) {
+        return results.mayDeliver(token, now, generation, sessionUser);
     }
 
     boolean abort(String candidate, long expectedGeneration) {

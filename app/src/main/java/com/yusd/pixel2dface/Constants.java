@@ -3,6 +3,7 @@ package com.yusd.pixel2dface;
 public final class Constants {
     public static final String PACKAGE_NAME = BuildConfig.APPLICATION_ID;
     public static final String SYSTEM_UI_PACKAGE = "com.android.systemui";
+    public static final String PERMISSION_SEND_SIGNALS = PACKAGE_NAME + ".permission.SEND_SIGNALS";
     public static final String UNLOCK_HOST_ACTIVITY = "com.yusd.pixel2dface.UnlockFaceCaptureActivity";
     public static final String PROVIDER_URI = "content://" + PACKAGE_NAME + ".config";
     public static final String ACTION_UNLOCK_RESULT = PACKAGE_NAME + ".ACTION_UNLOCK_RESULT";

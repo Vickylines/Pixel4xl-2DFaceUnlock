@@ -440,6 +440,16 @@ final class SystemUiSessionCoordinator {
                         invalidate(currentMonitor, "passive cache adapter rejected restoration");
                         return;
                     }
+                    synchronized (lock) {
+                        // Native callbacks can revoke this grant while the adapter writes it.
+                        // Remove that insertion before returning to SystemUI's event loop.
+                        if (session.generation != generation
+                                || !session.hasPassiveAuthentication(SystemClock.elapsedRealtime())) {
+                            SystemUiCompat.clearStoredWeakAuthentication(currentMonitor, expectedUser);
+                            trace("passive_restore_revoked", generation, "revoked or expired during adapter write");
+                            return;
+                        }
+                    }
                     trace("passive_restore_completed", generation,
                             "adapter=" + SystemUiCompat.getAuthenticationAdapterLabel());
                 });
@@ -450,8 +460,8 @@ final class SystemUiSessionCoordinator {
     private void handleResult(Intent intent) {
         String action = intent == null ? null : intent.getAction();
         if (Constants.ACTION_CONFIGURATION_CHANGED.equals(action)) {
-            // This signal only revokes authority. Sender identity cannot turn it into an
-            // authentication grant, and a forged signal can at most cancel a scan.
+            // The receiver requires the module's signature permission for every signal,
+            // including revocations, so other apps cannot repeatedly cancel recognition.
             invalidate(getMonitor(), "module configuration changed");
             return;
         }
@@ -638,7 +648,7 @@ final class SystemUiSessionCoordinator {
             filter.addAction(Constants.ACTION_CAMERA_HOST_READY);
             filter.addAction(Constants.ACTION_CAMERA_HOST_FINISHED);
             filter.addAction(Constants.ACTION_CONFIGURATION_CHANGED);
-            if (register(attached, receiver, filter)) {
+            if (register(attached, receiver, filter, Constants.PERMISSION_SEND_SIGNALS)) {
                 resultReceiver = receiver;
             }
         }
@@ -668,19 +678,20 @@ final class SystemUiSessionCoordinator {
             filter.addAction(Intent.ACTION_USER_UNLOCKED);
             filter.addAction(Intent.ACTION_USER_PRESENT);
             filter.addAction(USER_SWITCHED);
-            if (register(attached, receiver, filter)) {
+            if (register(attached, receiver, filter, null)) {
                 powerReceiver = receiver;
             }
         }
     }
 
     @SuppressWarnings("deprecation")
-    private boolean register(Context attached, BroadcastReceiver receiver, IntentFilter filter) {
+    private boolean register(Context attached, BroadcastReceiver receiver, IntentFilter filter,
+            String senderPermission) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                attached.registerReceiver(receiver, filter, null, main, Context.RECEIVER_EXPORTED);
+                attached.registerReceiver(receiver, filter, senderPermission, main, Context.RECEIVER_EXPORTED);
             } else {
-                attached.registerReceiver(receiver, filter, null, main);
+                attached.registerReceiver(receiver, filter, senderPermission, main);
             }
             return true;
         } catch (Throwable error) {

@@ -105,7 +105,14 @@ public final class TemplateStore {
 
     public static boolean tryClearTemplates(Context context) {
         boolean cleared = AtomicStoreFiles.locked(context, false, directory -> {
-            Properties properties = AtomicStoreFiles.readProperties(context, directory);
+            Properties properties;
+            try {
+                properties = AtomicStoreFiles.readProperties(context, directory);
+            } catch (AtomicStoreFiles.CorruptDataException corrupt) {
+                // Explicit deletion must still erase unreadable biometric material. Only
+                // format/size errors qualify; I/O errors keep failing without a reset.
+                properties = new Properties();
+            }
             TemplateCodec.clear(properties);
             properties.remove("failures");
             properties.remove("lockout_until");
@@ -281,9 +288,19 @@ public final class TemplateStore {
     }
 
     public static boolean tryRecordFailure(Context context) {
+        return recordFailure(context, TemplateStore::validRevision);
+    }
+
+    static boolean validateAndRecordFailure(Context context, RecognitionSettings settings) {
+        if (settings == null || settings.model == null || !settings.state.storageAvailable) return false;
+        // Delayed timeout/closed-eye writes cannot penalize a replacement enrollment or policy.
+        return recordFailure(context, properties -> settingsCurrent(properties, settings));
+    }
+
+    private static boolean recordFailure(Context context, Reader<Boolean> mayRecord) {
         return AtomicStoreFiles.locked(context, false, directory -> {
             Properties properties = AtomicStoreFiles.readProperties(context, directory);
-            if (!validRevision(properties)) return false;
+            if (!mayRecord.read(properties)) return false;
             Properties original = new Properties();
             original.putAll(properties);
             long previousLockout = StorePolicy.lockoutUntil(properties);

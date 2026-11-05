@@ -4,9 +4,9 @@
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel4xl-2DFaceUnlock)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **[0.10.1 正式发行版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.10.1)**：修复应用内能识别、锁屏冷启动却退出的问题；独立验证包移除全部 LSPosed 发现入口，避免误启用。覆盖升级保留已有 v3/v4 人脸与设置。Pixel 4 XL / Android 16 已确认完整锁屏认证、上滑进入桌面及相机释放，详见 [修复与实测记录](LOCKSCREEN-FIX-0.10.1.md)。
+> **[0.10.2 正式发行版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.10.2)**：修复录入授权、多脸检查、失败计数和锁屏会话竞态，补齐备份排除与损坏模板删除。覆盖升级保留已有 v3/v4 人脸与设置，详见 [发布说明](dist/RELEASE-NOTES-0.10.2.md)。
 
-这是一个面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL 便利解锁模块。当前正式版 0.10.1 支持离线 MobileFaceNet 与 v4 模板，已有 v3 模板继续使用纹理与几何双信号后端。相机、识别、存储与 SystemUI 会话分开管理；识别与一次性授权、系统弱认证策略及锁屏退出分别复核。
+这是一个面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL 便利解锁模块。当前正式版 0.10.2 支持离线 MobileFaceNet 与 v4 模板，已有 v3 模板继续使用纹理与几何双信号后端。相机、识别、存储与 SystemUI 会话分开管理；识别与一次性授权、系统弱认证策略及锁屏退出分别复核。
 
 设计见 [架构说明](ARCHITECTURE.md)，新后端来源与边界见 [0.10.0 重构记录](RECOGNITION-REFACTOR-0.10.0.md)。旧版重构证据保留在 [0.9.3 验证报告](REFACTOR-REPORT.md)。
 
@@ -14,7 +14,7 @@
 
 ## 下载
 
-- [下载 0.10.1 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.1/Pixel2DFaceUnlock-coral-0.10.1.apk) · [独立验证包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.1/Pixel2DFaceUnlock-0.10.1-validation.apk) · [中文安装说明](dist/INSTALL-ZH-0.10.1.txt) · [SHA-256 校验](dist/SHA256SUMS-0.10.1.txt)
+- [下载 0.10.2 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.2/Pixel2DFaceUnlock-coral-0.10.2.apk) · [独立验证包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.2/Pixel2DFaceUnlock-0.10.2-validation.apk) · [中文安装说明](dist/INSTALL-ZH-0.10.2.txt) · [SHA-256 校验](dist/SHA256SUMS-0.10.2.txt)
 - [下载 0.10.0 候选模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.0-candidate/Pixel2DFaceUnlock-coral-0.10.0-candidate.apk) · [独立验证包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.0-candidate/Pixel2DFaceUnlock-0.10.0-validation.apk) · [候选版安装说明](dist/INSTALL-ZH-0.10.0.txt) · [SHA-256 校验](dist/SHA256SUMS-0.10.0.txt)
 - [下载 0.9.3 APK](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.9.3/Pixel2DFaceUnlock-coral-0.9.3-refactor.apk) · [发布说明](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.9.3) · [SHA-256 校验](dist/SHA256SUMS-0.9.3.txt)
 - [完整中文安装说明](dist/Pixel_2D人脸解锁_安装使用说明.txt)
@@ -30,6 +30,12 @@
 “Android 10–16 适配”不等于所有组合都已真机验证：0.9.3 已在 Pixel 4 XL（coral）、LineageOS 23.2、Android 16 / API 36 完成覆盖安装、LSPosed/SystemUI 加载、正常识别上滑和闭眼失败后再次识别的人工复测。旧版双眼/单眼闭合拒绝及输入层检查记录保留在历史测试报告中。Android 10–15 的路径依据对应 AOSP SystemUI 数据结构进行了兼容编码和构建检查，仍需在各版本真机上逐一验证。非 Pixel、深度改造的厂商 SystemUI、访客／辅助用户、Android 9 以下及 Android 17 以上会安全停用钩子。
 
 详细状态见 [COMPATIBILITY.md](COMPATIBILITY.md)。
+
+## 0.10.2 授权与会话修复
+
+录入、修改识别设置和删除模板前，必须完成一次系统 PIN、图案或密码确认。人数检查与轮廓识别使用同一帧，信息缺失不会被当成持续闭眼；无效帧仍清空识别进度。修复冷却恢复、结果交付、失败计数及认证撤销竞态，显式排除云备份与设备迁移。
+
+198 项 JVM/Robolectric 测试通过，正式包、验证包及两套设备测试 APK 编译通过，Release Lint 为 0 错误、7 条已有警告。本次未在手机安装或执行锁屏复测；下方真机数据均保留其原始版本。
 
 ## 0.6.0 通用适配
 
@@ -89,7 +95,7 @@
 - Android 无关的质量策略与识别引擎统一处理眼睛、姿态、画质、双信号匹配及多帧投票；保留原算法和阈值。相机时间归一化后再检查重复、逆序、过期与会话边界。
 - 录入样本使用独立副本及采集时间间隔；取消先完成时禁止覆盖旧模板。录入有 45 秒时限，识别含初始化在内有 12 秒时限。
 - SystemUI 入口只安装钩子，配置与授权 IPC 移到后台；成功提交前重验启动用户、唤醒代次、配置版本和系统弱认证策略。
-- 设置变更会撤销旧会话及本模块的弱认证缓存。配置与模板使用跨进程文件事务，损坏数据安全停用，保存失败明确反馈。
+- 识别设置变更会撤销旧会话及本模块的弱认证缓存。配置与模板使用跨进程文件事务，损坏数据安全停用，保存失败明确反馈。
 - 透明宿主完成相机工作后主动释放自己的锁屏遮挡与常亮标记；不拦截其他来电、闹钟 Activity 的遮挡事件。
 - 0.8.x 的有效 v3 模板可以直接使用，无需重新录入。设置页后台读写，并显示真实版本和心跳时间范围。
 
@@ -108,7 +114,7 @@
 4. 打开“Pixel 2D 人脸解锁”，确认“LSPosed 钩子已加载”，并查看下面的运行时适配报告。
 5. 已有有效 v3/v4 模板无需重新录入；从 0.7.x 或更早版本升级时，按提示重新录入一次以建立 v4 模板。自然看向屏幕即可，不要求眨眼或转头。
 
-0.10.1 会保留已有 v3/v4 模板；新录入建立 MobileFaceNet v4 模板。验证版拥有独立数据，不能替代正式模块，也不会把录入自动同步到正式模块。升级验证包后它不再作为 LSPosed 模块显示；请确认启用的是正式包 `com.yusd.pixel2dface`，作用域只选系统界面。
+0.10.2 会保留已有 v3/v4 模板；新录入建立 MobileFaceNet v4 模板。验证版拥有独立数据，不能替代正式模块，也不会把录入自动同步到正式模块。升级验证包后它不再作为 LSPosed 模块显示；请确认启用的是正式包 `com.yusd.pixel2dface`，作用域只选系统界面。
 
 ## 安全说明
 
@@ -135,7 +141,7 @@ Windows 也可以运行 `build.ps1`。默认执行单元测试、Release 构建�
 
 本地 Release APK 关闭调试标记，但沿用现有 Android Debug 签名证书，以便覆盖升级先前测试版；证书 SHA-256 为 `769bae7364e73ad5c73835c7fbce30994ea4e9ff9efd32fde51404886d5ad7da`。自行编译的 APK 如果签名不同，不能直接覆盖安装。
 
-GitHub Actions 的 APK 使用 CI 环境生成的证书，供构建检查使用。覆盖升级请下载 GitHub Release 中经真机测试、与旧版签名一致的安装包。
+GitHub Actions 的 APK 使用 CI 环境生成的证书，供构建检查使用。覆盖升级请下载 GitHub Release 中与旧版签名一致的安装包；每个版本的实际验证范围见对应发布说明。
 
 ## 开源协议与第三方组件
 

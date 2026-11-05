@@ -3,19 +3,38 @@ package com.yusd.pixel2dface;
 import com.google.mlkit.vision.face.FaceDetection;
 import com.google.mlkit.vision.face.FaceDetector;
 import com.google.mlkit.vision.face.FaceDetectorOptions;
+import java.util.concurrent.Executor;
+import java.util.function.BooleanSupplier;
 
-/** Creates one detector per capture session so rapidly replaced Activities never share a client. */
+/** Each capture owns its counting and contour clients, including their native resources. */
 final class FaceDetectorFactory {
     private FaceDetectorFactory() {
     }
 
-    static FaceDetector create() {
-        return FaceDetection.getClient(new FaceDetectorOptions.Builder()
+    static SingleFaceDetector create(Executor executor, BooleanSupplier closing) {
+        FaceDetector population = FaceDetection.getClient(new FaceDetectorOptions.Builder()
+                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
+                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
+                .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
+                .setMinFaceSize(0.10f)
+                .build());
+        try {
+            return new SingleFaceDetector(population, FaceDetection.getClient(detailOptions()),
+                    executor, closing);
+        } catch (RuntimeException | LinkageError failure) {
+            population.close();
+            throw failure;
+        }
+    }
+
+    private static FaceDetectorOptions detailOptions() {
+        return new FaceDetectorOptions.Builder()
                 .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
                 .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
                 .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
                 .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
                 .setMinFaceSize(0.20f)
-                .build());
+                .build();
     }
 }

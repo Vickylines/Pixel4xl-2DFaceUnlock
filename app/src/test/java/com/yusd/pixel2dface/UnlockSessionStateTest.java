@@ -206,6 +206,56 @@ public final class UnlockSessionStateTest {
         assertFalse(state.abort("session", wake));
     }
 
+    @Test public void cooldownRejectionDoesNotLeaveReadinessPermanentlyPending() {
+        UnlockSessionState state = runningSession();
+        assertTrue(state.abort("session", state.generation));
+        long retry = state.wake(1_000L);
+        assertTrue(retry > 0L);
+        assertFalse(state.beginPreparation(retry, 1_010L));
+        assertFalse(state.isReadinessPending(retry));
+        long next = state.wake(3_000L);
+        assertTrue(next > retry);
+        assertTrue(state.beginPreparation(next, 3_010L));
+    }
+
+    @Test public void hostExitDoesNotEraseSuccessWaitingForConfigurationRecheck() {
+        UnlockSessionState state = runningSession();
+        state.configRevision = 42L;
+        long wake = state.generation;
+        assertTrue(state.results.consume("session", 200L, wake));
+        state.finishHost("session");
+        assertFalse(state.isHostActive(201L));
+        assertFalse(state.hasPassiveAuthentication(201L));
+        assertTrue(state.configurationMatches(42L));
+        assertTrue(state.results.claimDelivery("session", 300L, wake, 0));
+        state.authenticate(0, 300L);
+        assertTrue(state.hasPassiveAuthentication(301L));
+        assertFalse(state.results.claimDelivery("session", 302L, wake, 0));
+    }
+
+    @Test public void lateWakeCannotReplacePendingSuccessAfterHostExit() {
+        UnlockSessionState state = runningSession();
+        long wake = state.generation;
+        assertTrue(state.results.consume("session", 200L, wake));
+        state.finishHost("session");
+        assertEquals(-1L, state.wake(1_000L));
+        assertTrue(state.results.mayDeliver("session", 1_001L, wake, 0));
+        state.reset();
+        assertFalse(state.results.claimDelivery("session", 1_002L, wake, 0));
+    }
+
+    @Test public void hostExitCannotCreateOrExtendAnAuthenticationResult() {
+        UnlockSessionState state = runningSession();
+        state.finishHost("session");
+        assertFalse(state.results.consume("session", 200L, state.generation));
+        state = runningSession();
+        assertTrue(state.results.consume("session", 200L, state.generation));
+        state.finishHost("session");
+        assertFalse(state.results.claimDelivery("session",
+                121L + UnlockResultGuard.MAX_RESULT_AGE_MS, state.generation, 0));
+        assertTrue(state.wake(121L + UnlockResultGuard.MAX_RESULT_AGE_MS) > 0L);
+    }
+
     private static UnlockSessionState runningSession() {
         UnlockSessionState state = new UnlockSessionState();
         long wake = state.wake(100L);
