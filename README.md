@@ -4,15 +4,19 @@
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel4xl-2DFaceUnlock)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **[0.11.1 稳定版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.11.1)**：修复锁屏样式应用和覆盖层刷新，加入三态预览与明确应用，详见 [发布说明](dist/RELEASE-NOTES-0.11.1.md)。当前源码为 0.12.0，采用「一瞥」名称，并重新设计四种新增动效；尚未发布为稳定版。
+> **[0.12.0 稳定版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.12.0)**：应用更名为「一瞥」，重新设计光幕、星轨、线条和点阵，让识别过程中的人脸始终清楚可见。原有面容光环与灵动岛保留，详见 [发布说明](dist/RELEASE-NOTES-0.12.0.md)。
 
-一瞥是 Pixel4xl 2D Face Unlock 的新名字，面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL。当前正式版 0.11.1 支持离线 MobileFaceNet 与 v4 模板，已有 v3 模板继续使用纹理与几何双信号后端。相机、识别、存储与 SystemUI 会话分开管理；识别与一次性授权、系统弱认证策略及锁屏退出分别复核。
+一瞥是 Pixel4xl 2D Face Unlock 的新名字，面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL。当前正式版 0.12.0 支持离线 MobileFaceNet 与 v4 模板，已有 v3 模板继续使用纹理与几何双信号后端。相机、识别、存储与 SystemUI 会话分开管理；识别与一次性授权、系统弱认证策略及锁屏退出分别复核。
+
+![四种原生人脸动效](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.12.0/face-animations.gif)
 
 设计见 [架构说明](ARCHITECTURE.md)，新后端来源与边界见 [0.10.0 重构记录](RECOGNITION-REFACTOR-0.10.0.md)。旧版重构证据保留在 [0.9.3 验证报告](REFACTOR-REPORT.md)。
 
 > 本项目不是 Google、LineageOS、Magisk 或 LSPosed 的官方项目。普通 RGB 2D 人脸可能被照片或视频绕过，只适合便利解锁。
 
 ## 下载
+
+- [下载 0.12.0 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.12.0/Pixel2DFaceUnlock-coral-0.12.0.apk) · [独立诊断包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.12.0/Pixel2DFaceUnlock-0.12.0-validation.apk) · [安装说明](dist/INSTALL-ZH-0.12.0.txt) · [SHA-256](dist/SHA256SUMS-0.12.0.txt)
 
 - [下载 0.11.1 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.11.1/Pixel2DFaceUnlock-coral-0.11.1.apk) · [独立诊断包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.11.1/Pixel2DFaceUnlock-0.11.1-validation.apk) · [安装说明](dist/INSTALL-ZH-0.11.1.txt) · [SHA-256](dist/SHA256SUMS-0.11.1.txt)
 
