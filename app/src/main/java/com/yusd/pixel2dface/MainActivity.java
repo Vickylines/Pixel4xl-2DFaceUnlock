@@ -1,466 +1,380 @@
 package com.yusd.pixel2dface;
 
-import android.app.Activity;
-import android.app.AlertDialog;
+import android.Manifest;
+import android.app.KeyguardManager;
+import android.app.admin.DevicePolicyManager;
 import android.content.Intent;
-import android.graphics.Color;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
+import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
-import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.Switch;
 import android.widget.TextView;
-import android.widget.Toast;
-
-import java.util.Locale;
+import androidx.activity.ComponentActivity;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import com.google.android.material.button.MaterialButton;
+import com.google.android.material.button.MaterialButtonToggleGroup;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.materialswitch.MaterialSwitch;
+import com.google.android.material.snackbar.Snackbar;
+import java.text.DateFormat;
+import java.util.Date;
 import java.util.function.BooleanSupplier;
 
-public final class MainActivity extends Activity {
-    private static final int REQUEST_ENROLL = 100;
-    private static final int REQUEST_TEST = 101;
+public final class MainActivity extends ComponentActivity {
+    private static final int REQUEST_ENROLL = 100, REQUEST_TEST = 101, REQUEST_CAMERA = 102;
     private static final boolean VALIDATION = "validation".equals(BuildConfig.BUILD_TYPE);
     private final DeviceCredentialConfirmation credentials = new DeviceCredentialConfirmation(this);
-
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private final Runnable statusTick = new Runnable() {
+        @Override public void run() {
+            if (displayedState != null) renderSummary();
+            main.postDelayed(this, 1000);
+        }
+    };
     private TextView statusView;
-    private Switch enabledSwitch;
-    private Button enrollButton;
-    private Button testButton;
-    private Button deleteButton;
-    private Button faceIdStyleButton;
-    private Button islandStyleButton;
-    private TextView animationStyleSummary;
-    private Button strictRecognitionButton;
-    private Button balancedRecognitionButton;
-    private Button comfortRecognitionButton;
-    private TextView recognitionProfileSummary;
+    private View faceSection;
+    private MaterialSwitch enabledSwitch;
+    private MaterialButton primaryButton, enrollButton, testButton, deleteButton, previewButton;
+    private MaterialButton animationStyleButton;
+    private MaterialButton strictRecognitionButton, balancedRecognitionButton, comfortRecognitionButton;
+    private MaterialButtonToggleGroup profileChooser;
     private TemplateStore.StateSnapshot displayedState;
-    private boolean rendering;
-    private boolean saving;
-    private boolean resumed;
+    private long heartbeat;
+    private String compatibility = "";
+    private boolean rendering, saving, resumed;
     private int refreshGeneration;
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setTitle("Pixel 2D 人脸解锁");
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        getWindow().setNavigationBarContrastEnforced(false);
+        boolean lightBars = getResources().getBoolean(R.bool.light_system_bars);
+        WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView())
+                .setAppearanceLightStatusBars(lightBars);
+        WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView())
+                .setAppearanceLightNavigationBars(lightBars);
+        setTitle("人脸解锁");
         setContentView(buildContent());
+        setControlsEnabled(false);
     }
-
-    @Override
-    protected void onResume() {
+    @Override protected void onResume() {
         super.onResume();
         resumed = true;
         refreshState();
+        main.post(statusTick);
     }
-
     @Override protected void onPause() {
         resumed = false;
         refreshGeneration++;
+        main.removeCallbacks(statusTick);
         super.onPause();
     }
-
     @Override protected void onDestroy() {
         credentials.cancel();
+        main.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
 
     private View buildContent() {
-        ScrollView scrollView = new ScrollView(this);
-        scrollView.setFillViewport(true);
-        scrollView.setBackgroundColor(Color.rgb(247, 249, 252));
-
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), dp(22), dp(20), dp(32));
-        scrollView.addView(root, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        TextView title = text("Pixel 2D 人脸解锁", 28, Color.rgb(25, 32, 40));
-        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        root.addView(title);
-
-        TextView subtitle = text(Build.MANUFACTURER + " " + Build.MODEL
-                        + " · Android " + Build.VERSION.RELEASE
-                        + " / API " + Build.VERSION.SDK_INT,
-                14, Color.rgb(82, 94, 108));
-        root.addView(subtitle, margins(0, 6, 0, 18));
-        if (VALIDATION) root.addView(text("独立验证版：请录入人脸后点击“测试识别”。"
-                + "这里的数据与现有模块分开，不接管锁屏。", 15, Color.rgb(35, 85, 150)),
-                margins(0, 0, 0, 14));
-
-        LinearLayout warning = card();
-        TextView warningTitle = text("安全提示", 17, Color.rgb(130, 70, 0));
-        warningTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        warning.addView(warningTitle);
-        warning.addView(text("这是普通前置摄像头的弱生物识别。照片或视频仍可能绕过，"
-                        + "仅用于日常锁屏解锁，不用于支付、银行或密码管理器。",
-                14, Color.rgb(95, 64, 20)), margins(0, 6, 0, 0));
-        warning.addView(text("当前版本 " + BuildConfig.VERSION_NAME
-                        + "。适配目标为 Google Pixel 上的 AOSP/LineageOS 类 SystemUI，"
-                        + "Android 10–16 使用运行时探测，未知适配会安全停用。",
-                13, Color.rgb(110, 72, 20)), margins(0, 7, 0, 0));
-        warning.setBackground(rounded(Color.rgb(255, 244, 219), 16));
-        root.addView(warning, margins(0, 0, 0, 14));
-
-        LinearLayout stateCard = card();
-        statusView = text("正在检查模块状态…", 16, Color.rgb(35, 45, 55));
-        stateCard.addView(statusView);
-        enabledSwitch = new Switch(this);
-        enabledSwitch.setText("启用锁屏 2D 人脸解锁");
-        enabledSwitch.setTextSize(16);
-        enabledSwitch.setPadding(0, dp(12), 0, 0);
-        enabledSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
-            if (!rendering && !saving) {
-                if (checked && (displayedState == null || !displayedState.enrolled)) {
-                    Toast.makeText(this, "请先录入人脸", Toast.LENGTH_SHORT).show();
-                    rendering = true;
-                    buttonView.setChecked(false);
-                    rendering = false;
-                } else {
-                    rendering = true;
-                    buttonView.setChecked(displayedState.enabled);
-                    rendering = false;
-                    saveProtectedSetting(() -> TemplateStore.trySetEnabled(this, checked), null);
-                }
-            }
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setClipToPadding(true);
+        scroll.setBackgroundColor(getColor(R.color.page));
+        LinearLayout root = Ui.column(this);
+        root.setPadding(dp(24), dp(16), dp(24), dp(32));
+        scroll.addView(root);
+        ViewCompat.setOnApplyWindowInsetsListener(scroll, (view, windowInsets) -> {
+            Insets bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars()
+                    | WindowInsetsCompat.Type.displayCutout());
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            return windowInsets;
         });
-        stateCard.addView(enabledSwitch);
-        if (VALIDATION) enabledSwitch.setVisibility(View.GONE);
-        root.addView(stateCard, margins(0, 0, 0, 14));
-
-        LinearLayout appearance = card();
-        if (VALIDATION) appearance.setVisibility(View.GONE);
-        TextView appearanceTitle = text("锁屏动画", 18, Color.rgb(30, 40, 50));
-        appearanceTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        appearance.addView(appearanceTitle);
-        appearance.addView(text("选择后会在下一次亮屏时生效，不影响识别和解锁逻辑。",
-                13, Color.rgb(92, 103, 115)), margins(0, 5, 0, 12));
-
-        LinearLayout styleChooser = new LinearLayout(this);
-        styleChooser.setOrientation(LinearLayout.HORIZONTAL);
-        faceIdStyleButton = styleButton("面容光环");
-        islandStyleButton = styleButton("灵动岛");
-        LinearLayout.LayoutParams firstStyleParams = new LinearLayout.LayoutParams(
-                0, dp(50), 1f);
-        firstStyleParams.setMarginEnd(dp(8));
-        styleChooser.addView(faceIdStyleButton, firstStyleParams);
-        styleChooser.addView(islandStyleButton, new LinearLayout.LayoutParams(
-                0, dp(50), 1f));
-        appearance.addView(styleChooser);
-
-        animationStyleSummary = text("", 13, Color.rgb(72, 84, 96));
-        appearance.addView(animationStyleSummary, margins(2, 10, 2, 0));
-        faceIdStyleButton.setOnClickListener(v -> selectAnimationStyle(
-                TemplateStore.ANIMATION_STYLE_FACE_ID));
-        islandStyleButton.setOnClickListener(v -> selectAnimationStyle(
-                TemplateStore.ANIMATION_STYLE_DYNAMIC_ISLAND));
-        root.addView(appearance, margins(0, 0, 0, 14));
-
-        LinearLayout actions = card();
-        TextView faceTitle = text("人脸数据", 18, Color.rgb(30, 40, 50));
-        faceTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        actions.addView(faceTitle);
-
-        enrollButton = button("录入人脸");
+        scroll.addOnLayoutChangeListener((view, l, t, r, b, ol, ot, or, ob) -> {
+            int available = r - l - scroll.getPaddingLeft() - scroll.getPaddingRight();
+            int edge = Math.max(dp(24), (available - dp(560)) / 2);
+            if (root.getPaddingLeft() != edge) root.setPadding(edge, dp(16), edge, dp(32));
+        });
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(Ui.heading(this, VALIDATION ? "面容验证" : "人脸解锁", 30),
+                new LinearLayout.LayoutParams(0, -2, 1));
+        MaterialButton about = Ui.button(this, "", false);
+        about.setContentDescription("连接与关于");
+        about.setIconResource(R.drawable.ic_info);
+        about.setIconPadding(0);
+        about.setIconGravity(MaterialButton.ICON_GRAVITY_TEXT_START);
+        about.setStrokeWidth(0);
+        about.setPadding(0, 0, 0, 0);
+        about.setOnClickListener(v -> showDiagnostics());
+        header.addView(about, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        root.addView(header, Ui.space(this, 0, 24));
+        LinearLayout hero = Ui.column(this);
+        hero.setGravity(Gravity.CENTER_HORIZONTAL);
+        hero.setPadding(dp(24), dp(30), dp(24), dp(24));
+        hero.setBackground(Ui.rounded(this, R.color.accent_surface, 30));
+        ImageView face = new ImageView(this);
+        face.setImageResource(R.drawable.ic_face);
+        face.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        hero.addView(face, new LinearLayout.LayoutParams(dp(60), dp(60)));
+        statusView = Ui.heading(this, "正在读取设置", 25);
+        statusView.setTextColor(getColor(R.color.on_accent_surface));
+        statusView.setGravity(Gravity.CENTER);
+        hero.addView(statusView, Ui.space(this, 22, 22));
+        primaryButton = Ui.button(this, "录入面容", true);
+        primaryButton.setOnClickListener(v -> performPrimaryAction());
+        hero.addView(primaryButton, new LinearLayout.LayoutParams(-1, -2));
+        root.addView(hero, Ui.space(this, 0, 24));
+        LinearLayout faceSettings = section(root, "面容");
+        faceSection = (View) faceSettings.getParent();
+        enabledSwitch = new MaterialSwitch(this);
+        enabledSwitch.setText("锁屏解锁");
+        enabledSwitch.setTextSize(17);
+        enabledSwitch.setMinHeight(dp(60));
+        enabledSwitch.setOnCheckedChangeListener((button, checked) -> {
+            if (rendering) return;
+            rendering = true;
+            button.setChecked(displayedState.enabled);
+            rendering = false;
+            saveProtectedSetting(() -> TemplateStore.trySetEnabled(this, checked));
+        });
+        if (!VALIDATION) faceSettings.addView(enabledSwitch);
+        testButton = action(faceSettings, "测试识别", () -> startCapture(Constants.MODE_TEST, REQUEST_TEST));
+        LinearLayout management = new LinearLayout(this);
+        enrollButton = Ui.button(this, "重新录入", false);
+        enrollButton.setStrokeWidth(0);
         enrollButton.setOnClickListener(v -> startCapture(Constants.MODE_ENROLL, REQUEST_ENROLL));
-        actions.addView(enrollButton, margins(0, 12, 0, 8));
-
-        testButton = button("测试识别");
-        testButton.setOnClickListener(v -> startCapture(Constants.MODE_TEST, REQUEST_TEST));
-        actions.addView(testButton, margins(0, 0, 0, 8));
-
-        deleteButton = button("删除人脸数据");
-        deleteButton.setTextColor(Color.rgb(180, 35, 45));
-        deleteButton.setOnClickListener(v -> new AlertDialog.Builder(this)
-                .setTitle("删除人脸数据？")
-                .setMessage("删除后锁屏人脸解锁会立即停用。")
-                .setNegativeButton("取消", null)
-                .setPositiveButton("删除", (dialog, which) -> {
-                    saveProtectedSetting(() -> TemplateStore.tryClearTemplates(this), "人脸数据已删除");
-                })
-                .show());
-        actions.addView(deleteButton);
-        root.addView(actions, margins(0, 0, 0, 14));
-
-        LinearLayout options = card();
-        TextView optionsTitle = text("识别设置", 18, Color.rgb(30, 40, 50));
-        optionsTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        options.addView(optionsTitle);
-
-        TextView passiveTitle = text("无动作安全校验", 15, Color.rgb(45, 55, 65));
-        passiveTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        options.addView(passiveTitle, margins(0, 14, 0, 4));
-        options.addView(text("解锁时只需自然看向屏幕，不要求眨眼或转头。新版会按眼位对齐人脸，"
-                        + "并用有时限的多帧确认身份。闭眼、丢脸或画质失效会立即清空识别进度。",
-                13, Color.rgb(92, 103, 115)));
-
-        TextView profileTitle = text("安全偏好", 15, Color.rgb(45, 55, 65));
-        profileTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        options.addView(profileTitle, margins(0, 16, 0, 8));
-        LinearLayout profileChooser = new LinearLayout(this);
-        profileChooser.setOrientation(LinearLayout.HORIZONTAL);
-        strictRecognitionButton = styleButton("严格");
-        balancedRecognitionButton = styleButton("均衡");
-        comfortRecognitionButton = styleButton("便捷");
-        LinearLayout.LayoutParams profileButtonParams = new LinearLayout.LayoutParams(
-                0, dp(48), 1f);
-        profileButtonParams.setMarginEnd(dp(6));
-        profileChooser.addView(strictRecognitionButton, profileButtonParams);
-        LinearLayout.LayoutParams balancedParams = new LinearLayout.LayoutParams(
-                0, dp(48), 1f);
-        balancedParams.setMarginEnd(dp(6));
-        profileChooser.addView(balancedRecognitionButton, balancedParams);
-        profileChooser.addView(comfortRecognitionButton, new LinearLayout.LayoutParams(
-                0, dp(48), 1f));
-        options.addView(profileChooser);
-        recognitionProfileSummary = text("", 13, Color.rgb(92, 103, 115));
-        options.addView(recognitionProfileSummary, margins(2, 9, 2, 0));
-        strictRecognitionButton.setOnClickListener(v -> selectRecognitionProfile(
-                TemplateStore.RECOGNITION_PROFILE_STRICT));
-        balancedRecognitionButton.setOnClickListener(v -> selectRecognitionProfile(
-                TemplateStore.RECOGNITION_PROFILE_BALANCED));
-        comfortRecognitionButton.setOnClickListener(v -> selectRecognitionProfile(
-                TemplateStore.RECOGNITION_PROFILE_COMFORT));
-        options.addView(text("新录入使用离线 MobileFaceNet；已有数据继续使用原识别引擎。距离在录入时校准，并受固定上限约束。"
-                        + "“便捷”仅放宽很小范围，不能把普通 2D 前摄变成 Face ID。",
-                13, Color.rgb(100, 110, 120)), margins(0, 9, 0, 0));
-        root.addView(options);
-
-        TextView steps = text(VALIDATION ? "验证版只用于本机录入和主动识别测试，无需在 LSPosed 中启用，也无需重启。"
-                        : "安装后操作：在 LSPosed 中启用本模块，仅勾选“系统界面”作用域，"
-                        + "然后重启手机或重启 SystemUI。重启后的第一次解锁仍需输入 PIN。",
-                13, Color.rgb(85, 95, 105));
-        steps.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.addView(steps, margins(8, 18, 8, 0));
-        return scrollView;
+        management.addView(enrollButton, new LinearLayout.LayoutParams(0, -2, 1));
+        deleteButton = Ui.button(this, "删除面容", false);
+        deleteButton.setStrokeWidth(0);
+        deleteButton.setOnClickListener(v -> confirmDeletion());
+        management.addView(deleteButton, new LinearLayout.LayoutParams(0, -2, 1));
+        faceSettings.addView(management, Ui.space(this, 2, 2));
+        deleteButton.setTextColor(new ColorStateList(new int[][]{
+                new int[]{-android.R.attr.state_enabled}, new int[]{}}, new int[]{
+                (getColor(R.color.muted) & 0x00FFFFFF) | 0x61000000, getColor(R.color.danger)}));
+        LinearLayout recognition = section(root, "识别偏好");
+        profileChooser = chooser();
+        strictRecognitionButton = choice(profileChooser, "严格", () -> selectRecognitionProfile(0));
+        balancedRecognitionButton = choice(profileChooser, "均衡", () -> selectRecognitionProfile(1));
+        comfortRecognitionButton = choice(profileChooser, "便捷", () -> selectRecognitionProfile(2));
+        recognition.addView(profileChooser);
+        if (!VALIDATION) {
+            LinearLayout appearance = section(root, "锁屏动画");
+            animationStyleButton = action(appearance, "选择动画", () -> AnimationGallery.show(
+                    this, displayedState.animationStyle, this::selectAnimationStyle));
+            animationStyleButton.setIconResource(R.drawable.ic_styles);
+            animationStyleButton.setIconGravity(MaterialButton.ICON_GRAVITY_TEXT_START);
+            previewButton = action(appearance, "预览动画", this::showAnimationPreview);
+        }
+        return scroll;
+    }
+    private LinearLayout section(LinearLayout root, String label) {
+        LinearLayout section = Ui.column(this);
+        section.addView(Ui.heading(this, label, 18), Ui.space(this, 0, 12));
+        LinearLayout content = Ui.column(this);
+        content.setPadding(dp(16), dp(8), dp(16), dp(8));
+        content.setBackground(Ui.rounded(this, R.color.surface, 24));
+        section.addView(content);
+        root.addView(section, Ui.space(this, 0, 24));
+        return content;
+    }
+    private MaterialButton action(LinearLayout parent, String label, Runnable action) {
+        MaterialButton button = Ui.button(this, label, false);
+        button.setStrokeWidth(0);
+        button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        button.setPaddingRelative(0, dp(10), 0, dp(10));
+        button.setOnClickListener(v -> action.run());
+        parent.addView(button, Ui.space(this, 2, 2));
+        return button;
+    }
+    private MaterialButtonToggleGroup chooser() {
+        MaterialButtonToggleGroup chooser = new MaterialButtonToggleGroup(this);
+        chooser.setSingleSelection(true);
+        chooser.setSelectionRequired(true);
+        chooser.setPadding(0, dp(8), 0, dp(8));
+        return chooser;
+    }
+    private MaterialButton choice(MaterialButtonToggleGroup chooser, String label, Runnable action) {
+        MaterialButton button = Ui.button(this, label, false);
+        button.setCheckable(true);
+        button.setPaddingRelative(dp(8), dp(12), dp(8), dp(12));
+        button.setOnClickListener(v -> action.run());
+        chooser.addView(button, new LinearLayout.LayoutParams(0, -2, 1));
+        return button;
     }
 
     private void refreshState() {
-        final int request = ++refreshGeneration;
-        setControlsEnabled(false);
+        int request = ++refreshGeneration;
         StoreTasks.execute(() -> {
             TemplateStore.StateSnapshot state = TemplateStore.readState(this);
-            long heartbeat = TemplateStore.getHookHeartbeat(this);
-            String compatibility = TemplateStore.getHookCompatibility(this);
+            long lastHeartbeat = TemplateStore.getHookHeartbeat(this);
+            String hookCompatibility = TemplateStore.getHookCompatibility(this);
             runOnUiThread(() -> {
                 if (!resumed || isFinishing() || isDestroyed() || request != refreshGeneration) return;
                 displayedState = state;
-                renderState(state, heartbeat, compatibility);
+                heartbeat = lastHeartbeat;
+                compatibility = hookCompatibility;
+                renderState();
                 setControlsEnabled(!saving && !credentials.isPending());
             });
         });
     }
-
-    private void renderState(TemplateStore.StateSnapshot state, long heartbeat, String compatibility) {
-        boolean enrolled = state.enrolled;
-        boolean legacyTemplates = state.legacyTemplates;
+    private boolean cameraGranted() {
+        return checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+    }
+    private boolean deviceSecure() { return getSystemService(KeyguardManager.class).isDeviceSecure(); }
+    private boolean connectedThisBoot() {
         long age = System.currentTimeMillis() - heartbeat;
-        boolean hookSeen = heartbeat > 0 && age >= 0 && age < 24L * 60L * 60L * 1000L;
-        statusView.setText((VALIDATION ? "独立验证模式 · 不需要启用 LSPosed"
-                : hookSeen ? "● 最近 24 小时收到 LSPosed 心跳" : "○ 等待 LSPosed 加载")
-                + "\n" + (enrolled ? (state.neuralTemplate ? "已录入 MobileFaceNet 人脸" : "已录入兼容版人脸；重新录入可切换新引擎")
-                : legacyTemplates ? "检测到旧版人脸数据，请重新录入" : "尚未录入人脸")
-                + (!state.storageAvailable ? "\n数据无法读取，已安全停用，请检查或重新录入" : "")
-                + (state.lockoutUntil > System.currentTimeMillis() ? "\n多次识别失败，请稍后重试或输入 PIN" : "")
-                + (hookSeen && !compatibility.isEmpty() ? "\n\n" + compatibility : ""));
-        statusView.setTextColor(hookSeen ? Color.rgb(20, 125, 70) : Color.rgb(120, 75, 20));
+        return heartbeat > 0 && age >= 0 && age <= SystemClock.elapsedRealtime();
+    }
+    private void renderState() {
+        faceSection.setVisibility(displayedState.enrolled || displayedState.legacyTemplates
+                || !displayedState.storageAvailable ? View.VISIBLE : View.GONE);
         rendering = true;
-        enabledSwitch.setChecked(state.enabled && enrolled);
+        enabledSwitch.setChecked(displayedState.enabled && displayedState.enrolled);
         rendering = false;
-        enrollButton.setText(enrolled ? "重新录入人脸"
-                : legacyTemplates ? "升级并重新录入" : "录入人脸");
-        testButton.setEnabled(enrolled);
-        updateAnimationStyleControls();
-        updateRecognitionProfileControls();
+        enrollButton.setText(displayedState.enrolled ? "重新录入" : "录入面容");
+        profileChooser.check((displayedState.recognitionProfile == 0 ? strictRecognitionButton
+                : displayedState.recognitionProfile == 2 ? comfortRecognitionButton
+                : balancedRecognitionButton).getId());
+        if (!VALIDATION) animationStyleButton.setText(AnimationStyle.name(displayedState.animationStyle));
+        renderSummary();
     }
-
-    private void selectAnimationStyle(int style) {
-        String name = style == TemplateStore.ANIMATION_STYLE_DYNAMIC_ISLAND
-                ? "灵动岛" : "面容光环";
-        saveSetting(() -> TemplateStore.trySetAnimationStyle(this, style),
-                "已切换为“" + name + "”，下次亮屏生效");
+    private void renderSummary() {
+        String title, action;
+        if (!deviceSecure()) { title = "先设置屏幕锁定"; action = "设置屏幕锁定"; }
+        else if (!displayedState.storageAvailable) { title = "面容数据需要修复"; action = "重新录入"; }
+        else if (!displayedState.enrolled) {
+            title = displayedState.legacyTemplates ? "面容需要重新录入" : "从认识你开始";
+            action = "录入面容";
+        } else if (!cameraGranted()) { title = "相机权限未开启"; action = "开启相机权限"; }
+        else if (VALIDATION) { title = "面容已录入"; action = "测试识别"; }
+        else if (!displayedState.enabled) { title = "人脸解锁已暂停"; action = "启用解锁"; }
+        else if (displayedState.lockoutUntil > System.currentTimeMillis()) {
+            long seconds = (displayedState.lockoutUntil - System.currentTimeMillis() + 999) / 1000;
+            title = seconds < 60 ? seconds + " 秒后恢复解锁" : "稍后恢复解锁";
+            action = "测试识别";
+        } else if (!connectedThisBoot()) { title = "等待模块连接"; action = "连接锁屏模块"; }
+        else { title = "锁屏解锁已开启"; action = "测试识别"; }
+        if (!statusView.getText().toString().equals(title)) statusView.setText(title);
+        if (!primaryButton.getText().toString().equals(action)) primaryButton.setText(action);
+        testButton.setVisibility(displayedState.enrolled && cameraGranted()
+                && !"测试识别".equals(action) ? View.VISIBLE : View.GONE);
     }
-
-    private void updateAnimationStyleControls() {
-        if (faceIdStyleButton == null || islandStyleButton == null
-                || animationStyleSummary == null) {
-            return;
-        }
-        if (displayedState == null) return;
-        int style = displayedState.animationStyle;
-        boolean island = style == TemplateStore.ANIMATION_STYLE_DYNAMIC_ISLAND;
-        styleButtonState(faceIdStyleButton, !island);
-        styleButtonState(islandStyleButton, island);
-        animationStyleSummary.setText(island
-                ? "灵动岛：加宽的深色胶囊、玻璃细边与流动扫描光，成功后自然收束。"
-                : "面容光环：更开阔的双层表盘、环形光轨与柔和呼吸动效。" );
+    private void performPrimaryAction() {
+        if (!deviceSecure()) startActivity(new Intent(DevicePolicyManager.ACTION_SET_NEW_PASSWORD));
+        else if (!displayedState.enrolled || !displayedState.storageAvailable)
+            startCapture(Constants.MODE_ENROLL, REQUEST_ENROLL);
+        else if (!cameraGranted()) requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA);
+        else if (!VALIDATION && !displayedState.enabled)
+            saveProtectedSetting(() -> TemplateStore.trySetEnabled(this, true));
+        else if (!VALIDATION && !connectedThisBoot()
+                && displayedState.lockoutUntil <= System.currentTimeMillis()) showDiagnostics();
+        else startCapture(Constants.MODE_TEST, REQUEST_TEST);
     }
-
+    private void confirmDeletion() {
+        new MaterialAlertDialogBuilder(this).setTitle("删除已录入的面容？")
+                .setMessage("删除后，人脸解锁会关闭。")
+                .setNegativeButton("保留", null)
+                .setPositiveButton("删除", (dialog, which) ->
+                        saveProtectedSetting(() -> TemplateStore.tryClearTemplates(this))).show();
+    }
     private void selectRecognitionProfile(int profile) {
-        saveProtectedSetting(() -> TemplateStore.trySetRecognitionProfile(this, profile), null);
+        renderState(); // Keep the saved selection until device credentials confirm the change.
+        if (profile != displayedState.recognitionProfile)
+            saveProtectedSetting(() -> TemplateStore.trySetRecognitionProfile(this, profile));
     }
-
-    private void updateRecognitionProfileControls() {
-        if (strictRecognitionButton == null || balancedRecognitionButton == null
-                || comfortRecognitionButton == null || recognitionProfileSummary == null) {
-            return;
-        }
-        if (displayedState == null) return;
-        int profile = displayedState.recognitionProfile;
-        styleButtonState(strictRecognitionButton,
-                profile == TemplateStore.RECOGNITION_PROFILE_STRICT);
-        styleButtonState(balancedRecognitionButton,
-                profile == TemplateStore.RECOGNITION_PROFILE_BALANCED);
-        styleButtonState(comfortRecognitionButton,
-                profile == TemplateStore.RECOGNITION_PROFILE_COMFORT);
-        if (profile == TemplateStore.RECOGNITION_PROFILE_STRICT) {
-            recognitionProfileSummary.setText("严格：身份距离上限最低，适合更重视误识别风险。" );
-        } else if (profile == TemplateStore.RECOGNITION_PROFILE_COMFORT) {
-            recognitionProfileSummary.setText("便捷：允许较小的环境变化，仍需通过多帧一致性。" );
-        } else {
-            recognitionProfileSummary.setText("均衡（推荐）：自动校准与多帧确认兼顾速度和容错。" );
-        }
+    private void selectAnimationStyle(int style) {
+        renderState();
+        if (style != displayedState.animationStyle)
+            saveSetting(() -> TemplateStore.trySetAnimationStyle(this, style));
     }
-
+    private void showAnimationPreview() {
+        AnimationGallery.preview(this, displayedState.animationStyle);
+    }
+    private void showDiagnostics() {
+        String connection = heartbeat == 0 ? "尚未收到连接"
+                : "上次连接：" + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                        .format(new Date(heartbeat));
+        String details = VALIDATION ? "独立验证版\n" : connection + "\n\n"
+                + "在 LSPosed 中启用本模块，作用域选择“系统界面”，然后重启。重启后的首次解锁需要输入 PIN。\n";
+        if (!compatibility.isEmpty()) details += "\n" + compatibility + "\n";
+        details += "\nPixel 2D " + BuildConfig.VERSION_NAME + "\n" + Build.MODEL
+                + " / Android " + Build.VERSION.RELEASE
+                + "\n\n面容在本机处理，不上传照片。普通前摄的 2D 识别可能被照片或视频绕过，不适用于支付。";
+        new MaterialAlertDialogBuilder(this).setTitle("连接与关于").setMessage(details)
+                .setNeutralButton("刷新连接", (dialog, which) -> refreshState())
+                .setPositiveButton("完成", null).show();
+    }
     private void startCapture(String mode, int requestCode) {
-        Intent intent = new Intent(this, FaceCaptureActivity.class);
-        intent.putExtra(Constants.EXTRA_MODE, mode);
-        startActivityForResult(intent, requestCode);
+        startActivityForResult(new Intent(this, FaceCaptureActivity.class)
+                .putExtra(Constants.EXTRA_MODE, mode), requestCode);
     }
-
-    private void saveProtectedSetting(BooleanSupplier write, String successMessage) {
+    private void saveProtectedSetting(BooleanSupplier write) {
         if (saving || credentials.isPending()) return;
         setControlsEnabled(false);
-        credentials.request("确认修改人脸解锁设置",
-                () -> saveSetting(write, successMessage), this::refreshState);
+        credentials.request("确认修改人脸解锁设置", () -> saveSetting(write), this::refreshState);
     }
-
-    private void saveSetting(BooleanSupplier write, String successMessage) {
+    private void saveSetting(BooleanSupplier write) {
         if (saving) return;
         saving = true;
         setControlsEnabled(false);
         StoreTasks.execute(() -> {
-            boolean success;
-            try { success = write.getAsBoolean(); }
-            catch (RuntimeException failure) { success = false; }
-            final boolean saved = success;
+            boolean saved = write.getAsBoolean();
             runOnUiThread(() -> {
                 saving = false;
                 if (!resumed || isFinishing() || isDestroyed()) return;
-                if (!saved || successMessage != null) Toast.makeText(this,
-                        saved ? successMessage : "保存失败，请重试；原设置仍保留", Toast.LENGTH_LONG).show();
+                if (!saved) Snackbar.make(primaryButton, "未能保存，原设置已保留", Snackbar.LENGTH_LONG)
+                        .setAction("重试", v -> saveProtectedSetting(write)).show();
                 refreshState();
             });
         });
     }
-
     private void setControlsEnabled(boolean enabled) {
-        if (enabledSwitch == null) return;
-        enabledSwitch.setEnabled(enabled);
-        enrollButton.setEnabled(enabled);
-        deleteButton.setEnabled(enabled);
-        testButton.setEnabled(enabled && displayedState != null && displayedState.enrolled);
-        faceIdStyleButton.setEnabled(enabled);
-        islandStyleButton.setEnabled(enabled);
+        boolean enrolled = displayedState != null && displayedState.enrolled;
+        primaryButton.setEnabled(enabled);
+        enabledSwitch.setEnabled(enabled && enrolled
+                && (displayedState.enabled || (deviceSecure() && cameraGranted())));
+        enrollButton.setEnabled(enabled && deviceSecure());
+        testButton.setEnabled(enabled && enrolled && cameraGranted());
+        deleteButton.setEnabled(enabled && displayedState != null
+                && (enrolled || displayedState.legacyTemplates || !displayedState.storageAvailable));
         strictRecognitionButton.setEnabled(enabled);
         balancedRecognitionButton.setEnabled(enabled);
         comfortRecognitionButton.setEnabled(enabled);
+        if (!VALIDATION) {
+            animationStyleButton.setEnabled(enabled);
+            previewButton.setEnabled(enabled);
+        }
     }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (credentials.onActivityResult(requestCode, resultCode)) return;
-        if (requestCode == REQUEST_ENROLL && resultCode == RESULT_OK) {
-            Toast.makeText(this, "人脸录入完成", Toast.LENGTH_LONG).show();
-        } else if (requestCode == REQUEST_TEST && data != null) {
-            float score = data.getFloatExtra(Constants.EXTRA_SCORE, Float.NaN);
-            String result = resultCode == RESULT_OK ? "识别成功" : "识别失败";
-            String message = data.getStringExtra("message");
-            if (message != null && !message.isEmpty()) result += "：" + message;
-            if (Float.isFinite(score) && score >= 0 && score < Float.MAX_VALUE) {
-                result += String.format(Locale.CHINA, "，距离 %.3f", score);
-            }
-            new AlertDialog.Builder(this).setTitle("测试结果").setMessage(result)
-                    .setPositiveButton("确定", null).show();
-        }
         refreshState();
     }
-
-    private LinearLayout card() {
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(dp(18), dp(18), dp(18), dp(18));
-        layout.setBackground(rounded(Color.WHITE, 18));
-        layout.setElevation(dp(1));
-        return layout;
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode != REQUEST_CAMERA) return;
+        if (!cameraGranted() && !shouldShowRequestPermissionRationale(Manifest.permission.CAMERA))
+            new MaterialAlertDialogBuilder(this).setTitle("相机权限已关闭")
+                    .setNegativeButton("返回", null)
+                    .setPositiveButton("前往设置", (dialog, which) -> startActivity(new Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))))
+                    .show();
+        refreshState();
     }
-
-    private Button button(String label) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setTextSize(15);
-        button.setAllCaps(false);
-        button.setMinHeight(dp(48));
-        return button;
-    }
-
-    private Button styleButton(String label) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setTextSize(14);
-        button.setAllCaps(false);
-        button.setPadding(dp(10), 0, dp(10), 0);
-        button.setStateListAnimator(null);
-        return button;
-    }
-
-    private void styleButtonState(Button button, boolean selected) {
-        button.setTextColor(selected ? Color.rgb(20, 92, 166) : Color.rgb(75, 86, 98));
-        button.setTypeface(Typeface.DEFAULT, selected ? Typeface.BOLD : Typeface.NORMAL);
-        button.setBackground(roundedStroke(
-                selected ? Color.rgb(232, 244, 255) : Color.rgb(246, 248, 251),
-                selected ? Color.rgb(78, 155, 230) : Color.rgb(216, 222, 229),
-                14));
-    }
-
-    private TextView text(String value, float size, int color) {
-        TextView view = new TextView(this);
-        view.setText(value);
-        view.setTextSize(size);
-        view.setTextColor(color);
-        view.setLineSpacing(0, 1.15f);
-        return view;
-    }
-
-    private LinearLayout.LayoutParams margins(int left, int top, int right, int bottom) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMargins(dp(left), dp(top), dp(right), dp(bottom));
-        return params;
-    }
-
-    private GradientDrawable rounded(int color, int radiusDp) {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(color);
-        drawable.setCornerRadius(dp(radiusDp));
-        return drawable;
-    }
-
-    private GradientDrawable roundedStroke(int color, int strokeColor, int radiusDp) {
-        GradientDrawable drawable = rounded(color, radiusDp);
-        drawable.setStroke(dp(1), strokeColor);
-        return drawable;
-    }
-
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
-    }
-
+    private int dp(int value) { return Ui.dp(this, value); }
 }

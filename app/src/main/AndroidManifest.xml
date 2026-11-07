@@ -69,7 +69,7 @@
             android:permission="android.permission.STATUS_BAR_SERVICE"
             android:showWhenLocked="true"
             android:taskAffinity="${applicationId}.capture"
-            android:theme="@style/Theme.Pixel2DFace.Capture" />
+            android:theme="@style/Theme.Pixel2DFace.Unlock" />
 
         <provider
             android:name=".ConfigProvider"

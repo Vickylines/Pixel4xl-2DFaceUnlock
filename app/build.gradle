@@ -10,10 +10,12 @@ android {
         applicationId "com.yusd.pixel2dface"
         minSdk 29
         targetSdk 36
-        versionCode 26
-        versionName "0.10.2"
+        versionCode 27
+        versionName "0.11.0"
         manifestPlaceholders = [isXposedModule: "true"]
-        testInstrumentationRunner project.hasProperty("provisioning")
+        testInstrumentationRunner project.hasProperty("uiReview")
+                ? "com.yusd.pixel2dface.UiReviewInstrumentation"
+                : project.hasProperty("provisioning")
                 ? "com.yusd.pixel2dface.EnrollmentTransferInstrumentation"
                 : "com.yusd.pixel2dface.StorageInstrumentation"
         ndk {
@@ -41,8 +43,15 @@ android {
     }
 
     buildTypes {
+        debug {
+            ndk { abiFilters "arm64-v8a", "x86_64" }
+        }
         validation {
             initWith debug
+            ndk {
+                abiFilters.clear()
+                abiFilters "arm64-v8a"
+            }
             applicationIdSuffix ".validation"
             versionNameSuffix "-validation"
             manifestPlaceholders = [isXposedModule: "false"]
@@ -70,6 +79,7 @@ dependencies {
     compileOnly "de.robv.android.xposed:api:82"
 
     implementation "androidx.activity:activity:1.10.1"
+    implementation "com.google.android.material:material:1.13.0"
     implementation "androidx.camera:camera-core:1.4.2"
     implementation "androidx.camera:camera-camera2:1.4.2"
     implementation "androidx.camera:camera-lifecycle:1.4.2"

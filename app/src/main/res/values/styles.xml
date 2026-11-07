@@ -1,14 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Pixel2DFace" parent="android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#1976D2</item>
-        <item name="android:navigationBarColor">#F7F9FC</item>
-        <item name="android:statusBarColor">#F7F9FC</item>
-        <item name="android:windowLightStatusBar">true</item>
+    <style name="Theme.Pixel2DFace" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:windowBackground">@color/page</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="colorPrimary">@color/accent</item>
+        <item name="colorOnPrimary">@color/on_accent</item>
+        <item name="colorPrimaryContainer">@color/accent_surface</item>
+        <item name="colorOnPrimaryContainer">@color/on_accent_surface</item>
+        <item name="colorSecondaryContainer">@color/accent_surface</item>
+        <item name="colorOnSecondaryContainer">@color/on_accent_surface</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorOnSurface">@color/ink</item>
+        <item name="colorOnSurfaceVariant">@color/muted</item>
+        <item name="colorOutline">@color/outline</item>
+        <item name="colorError">@color/danger</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">@bool/light_system_bars</item>
+        <item name="android:windowLightNavigationBar">@bool/light_system_bars</item>
+        <item name="android:windowActionModeOverlay">true</item>
     </style>
 
-    <style name="Theme.Pixel2DFace.Capture" parent="android:style/Theme.Material.NoActionBar">
+    <style name="Theme.Pixel2DFace.Capture" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowBackground">@color/capture_background</item>
+        <item name="colorPrimary">#B6C4FF</item>
+        <item name="colorOnPrimary">#172D7C</item>
+        <item name="colorSurface">#1B2130</item>
+        <item name="colorOnSurface">#E7ECFA</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <!-- The silent keyguard host must remain translucent and independent of the app UI. -->
+    <style name="Theme.Pixel2DFace.Unlock" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:backgroundDimEnabled">false</item>

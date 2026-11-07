@@ -88,9 +88,7 @@ final class SystemUiFeedback {
 
     void style(int requested) {
         onMain(() -> {
-            style = requested == UnlockFaceAnimationView.STYLE_DYNAMIC_ISLAND
-                    ? UnlockFaceAnimationView.STYLE_DYNAMIC_ISLAND
-                    : UnlockFaceAnimationView.STYLE_FACE_ID;
+            style = AnimationStyle.normalize(requested);
             if (animation != null) {
                 animation.setVisualStyle(style);
             }

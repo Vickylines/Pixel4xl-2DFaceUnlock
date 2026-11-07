@@ -26,7 +26,7 @@ final class StorePolicy {
         return safeAnimation(integer(properties, "animation_style", 0));
     }
 
-    static int safeAnimation(int value) { return value == 1 ? 1 : 0; }
+    static int safeAnimation(int value) { return AnimationStyle.normalize(value); }
 
     static float calibratedThreshold(Properties properties) {
         if (integer(properties, "template_version", -1) == TemplateCodec.VERSION) {

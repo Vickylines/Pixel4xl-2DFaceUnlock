@@ -4,15 +4,17 @@
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel4xl-2DFaceUnlock)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **[0.10.2 正式发行版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.10.2)**：修复录入授权、多脸检查、失败计数和锁屏会话竞态，补齐备份排除与损坏模板删除。覆盖升级保留已有 v3/v4 人脸与设置，详见 [发布说明](dist/RELEASE-NOTES-0.10.2.md)。
+> **[0.11.0 体验更新](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.11.0)**：重做设置、录入和识别结果页，支持深色模式、大字体、原地重试与权限恢复。覆盖升级保留有效 v3/v4 面容，详见 [发布说明](dist/RELEASE-NOTES-0.11.0.md)。
 
-这是一个面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL 便利解锁模块。当前正式版 0.10.2 支持离线 MobileFaceNet 与 v4 模板，已有 v3 模板继续使用纹理与几何双信号后端。相机、识别、存储与 SystemUI 会话分开管理；识别与一次性授权、系统弱认证策略及锁屏退出分别复核。
+这是一个面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL 便利解锁模块。当前正式版 0.11.0 支持离线 MobileFaceNet 与 v4 模板，已有 v3 模板继续使用纹理与几何双信号后端。相机、识别、存储与 SystemUI 会话分开管理；识别与一次性授权、系统弱认证策略及锁屏退出分别复核。
 
 设计见 [架构说明](ARCHITECTURE.md)，新后端来源与边界见 [0.10.0 重构记录](RECOGNITION-REFACTOR-0.10.0.md)。旧版重构证据保留在 [0.9.3 验证报告](REFACTOR-REPORT.md)。
 
 > 本项目不是 Google、LineageOS、Magisk 或 LSPosed 的官方项目。普通 RGB 2D 人脸可能被照片或视频绕过，只适合便利解锁。
 
 ## 下载
+
+- [下载 0.11.0 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.11.0/Pixel2DFaceUnlock-coral-0.11.0.apk) · [独立验证包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.11.0/Pixel2DFaceUnlock-0.11.0-validation.apk) · [安装说明](dist/INSTALL-ZH-0.11.0.txt) · [SHA-256](dist/SHA256SUMS-0.11.0.txt)
 
 - [下载 0.10.2 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.2/Pixel2DFaceUnlock-coral-0.10.2.apk) · [独立验证包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.2/Pixel2DFaceUnlock-0.10.2-validation.apk) · [中文安装说明](dist/INSTALL-ZH-0.10.2.txt) · [SHA-256 校验](dist/SHA256SUMS-0.10.2.txt)
 - [下载 0.10.0 候选模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.0-candidate/Pixel2DFaceUnlock-coral-0.10.0-candidate.apk) · [独立验证包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.0-candidate/Pixel2DFaceUnlock-0.10.0-validation.apk) · [候选版安装说明](dist/INSTALL-ZH-0.10.0.txt) · [SHA-256 校验](dist/SHA256SUMS-0.10.0.txt)
@@ -30,6 +32,16 @@
 “Android 10–16 适配”不等于所有组合都已真机验证：0.9.3 已在 Pixel 4 XL（coral）、LineageOS 23.2、Android 16 / API 36 完成覆盖安装、LSPosed/SystemUI 加载、正常识别上滑和闭眼失败后再次识别的人工复测。旧版双眼/单眼闭合拒绝及输入层检查记录保留在历史测试报告中。Android 10–15 的路径依据对应 AOSP SystemUI 数据结构进行了兼容编码和构建检查，仍需在各版本真机上逐一验证。非 Pixel、深度改造的厂商 SystemUI、访客／辅助用户、Android 9 以下及 Android 17 以上会安全停用钩子。
 
 详细状态见 [COMPATIBILITY.md](COMPATIBILITY.md)。
+
+## 0.11.0 使用体验
+
+首页按权限、录入和连接状态给出主要操作；设置、取景与结果页支持深浅配色、横屏和大字体。失败可以原地重试，取消直接返回；重试和页面恢复不会复用录入授权。
+
+六种锁屏动画：面容光环、灵动岛、柔光、轨道、极简、光点。选择页展示实际外观，预览可分别查看识别中、成功和失败；支持系统关闭动画，不延迟解锁。
+
+208 项回归检查、发布构建和 lint 通过。已在 Android 15 模拟器检查界面、相机超时及权限恢复；本次未完成 Pixel 真机真人识别或锁屏复测。
+
+界面采用 [Material Components 1.13.0](https://github.com/material-components/material-components-android/releases/tag/1.13.0)，[Apache 2.0 许可证](app/src/main/assets/licenses/Material-Components-Apache-2.0.txt)随包保留。
 
 ## 0.10.2 授权与会话修复
 
@@ -82,7 +94,7 @@
 
 ## 当前解锁逻辑
 
-日常解锁不会显示摄像头画面。动画注入原生 SystemUI 锁屏，可选择“面容光环”或“灵动岛”。
+日常解锁不会显示摄像头画面。动画注入原生 SystemUI 锁屏，可从六种样式中选择，并在设置中预览。
 
 - 停留在普通时间锁屏：人脸通过后原生锁图标变为解锁状态，仍需向上滑动进入桌面。
 - 已进入 PIN/密码界面：人脸通过后直接完成当前解锁。
