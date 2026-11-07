@@ -8,9 +8,13 @@
         <item name="colorOnPrimary">@color/on_accent</item>
         <item name="colorPrimaryContainer">@color/accent_surface</item>
         <item name="colorOnPrimaryContainer">@color/on_accent_surface</item>
+        <item name="colorSecondary">@color/accent</item>
+        <item name="colorOnSecondary">@color/on_accent</item>
         <item name="colorSecondaryContainer">@color/accent_surface</item>
         <item name="colorOnSecondaryContainer">@color/on_accent_surface</item>
         <item name="colorSurface">@color/surface</item>
+        <item name="colorSurfaceContainerHigh">@color/surface</item>
+        <item name="colorSurfaceContainerLow">@color/page</item>
         <item name="colorOnSurface">@color/ink</item>
         <item name="colorOnSurfaceVariant">@color/muted</item>
         <item name="colorOutline">@color/outline</item>

@@ -67,7 +67,7 @@ public final class MainActivity extends ComponentActivity {
                 .setAppearanceLightStatusBars(lightBars);
         WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView())
                 .setAppearanceLightNavigationBars(lightBars);
-        setTitle("人脸解锁");
+        setTitle(R.string.app_name);
         setContentView(buildContent());
         setControlsEnabled(false);
     }
@@ -110,7 +110,7 @@ public final class MainActivity extends ComponentActivity {
         });
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.addView(Ui.heading(this, VALIDATION ? "面容验证" : "人脸解锁", 30),
+        header.addView(Ui.heading(this, getString(R.string.app_name), 30),
                 new LinearLayout.LayoutParams(0, -2, 1));
         MaterialButton about = Ui.button(this, "", false);
         about.setContentDescription("连接与关于");
@@ -127,7 +127,7 @@ public final class MainActivity extends ComponentActivity {
         hero.setPadding(dp(24), dp(30), dp(24), dp(24));
         hero.setBackground(Ui.rounded(this, R.color.accent_surface, 30));
         ImageView face = new ImageView(this);
-        face.setImageResource(R.drawable.ic_face);
+        face.setImageResource(R.drawable.ic_yipie);
         face.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         hero.addView(face, new LinearLayout.LayoutParams(dp(60), dp(60)));
         statusView = Ui.heading(this, "正在读取设置", 25);
@@ -322,7 +322,7 @@ public final class MainActivity extends ComponentActivity {
         if (!VALIDATION && hookVersion > 0) details += "\n锁屏运行版本：" + hookVersion
                 + " / 已安装版本：" + BuildConfig.VERSION_CODE + "\n";
         if (!compatibility.isEmpty()) details += "\n" + compatibility + "\n";
-        details += "\nPixel 2D " + BuildConfig.VERSION_NAME + "\n" + Build.MODEL
+        details += "\n" + getString(R.string.app_name) + " " + BuildConfig.VERSION_NAME + "\n" + Build.MODEL
                 + " / Android " + Build.VERSION.RELEASE
                 + "\n\n面容在本机处理，不上传照片。普通前摄的 2D 识别可能被照片或视频绕过，不适用于支付。";
         new MaterialAlertDialogBuilder(this).setTitle("连接与关于").setMessage(details)

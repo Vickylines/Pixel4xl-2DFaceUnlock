@@ -669,6 +669,7 @@ public final class UnlockFaceAnimationView extends View {
     private float transitionProgress() {
         if (!ValueAnimator.areAnimatorsEnabled()) return 1f;
         long duration = state == SUCCESS ? SUCCESS_MORPH_MS : FAILURE_MORPH_MS;
+        if (visualStyle >= AnimationStyle.GLOW) duration = state == SUCCESS ? 520L : 420L;
         return clamp((SystemClock.elapsedRealtime() - stateStartedAt) / (float) duration);
     }
 

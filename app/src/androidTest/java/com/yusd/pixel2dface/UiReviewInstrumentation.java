@@ -41,6 +41,12 @@ public final class UiReviewInstrumentation extends Instrumentation {
             return;
         }
         try {
+            if (Boolean.parseBoolean(arguments.getString("artReview", "false"))) {
+                MotionArtworkReview.export(getTargetContext());
+                result.putString("result", "Exported native artwork frames and adaptive icon");
+                finish(Activity.RESULT_OK, result);
+                return;
+            }
             if (arguments.getString("fixture", "empty").equals("enrolled")) {
                 float[] vector = new float[EmbeddingIdentity.DIMENSIONS];
                 vector[0] = 1f;

@@ -1,12 +1,12 @@
-# Pixel4xl 2D Face Unlock
+# 一瞥
 
 [![Android CI](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/actions/workflows/android.yml/badge.svg)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/actions/workflows/android.yml)
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel4xl-2DFaceUnlock)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **[0.11.0 体验更新](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.11.0)**：重做设置、录入和识别结果页，支持深色模式、大字体、原地重试与权限恢复。覆盖升级保留有效 v3/v4 面容，详见 [发布说明](dist/RELEASE-NOTES-0.11.0.md)。
+> **[0.11.1 稳定版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.11.1)**：修复锁屏样式应用和覆盖层刷新，加入三态预览与明确应用，详见 [发布说明](dist/RELEASE-NOTES-0.11.1.md)。当前源码为 0.12.0，采用「一瞥」名称，并重新设计四种新增动效；尚未发布为稳定版。
 
-这是一个面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL 便利解锁模块。当前正式版 0.11.0 支持离线 MobileFaceNet 与 v4 模板，已有 v3 模板继续使用纹理与几何双信号后端。相机、识别、存储与 SystemUI 会话分开管理；识别与一次性授权、系统弱认证策略及锁屏退出分别复核。
+一瞥是 Pixel4xl 2D Face Unlock 的新名字，面向已 Root、已安装 LSPosed 的 Google Pixel 4 XL。当前正式版 0.11.1 支持离线 MobileFaceNet 与 v4 模板，已有 v3 模板继续使用纹理与几何双信号后端。相机、识别、存储与 SystemUI 会话分开管理；识别与一次性授权、系统弱认证策略及锁屏退出分别复核。
 
 设计见 [架构说明](ARCHITECTURE.md)，新后端来源与边界见 [0.10.0 重构记录](RECOGNITION-REFACTOR-0.10.0.md)。旧版重构证据保留在 [0.9.3 验证报告](REFACTOR-REPORT.md)。
 

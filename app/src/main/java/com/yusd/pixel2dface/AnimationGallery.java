@@ -56,6 +56,7 @@ final class AnimationGallery {
                 tile.setGravity(Gravity.CENTER_HORIZONTAL);
                 tile.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
                 ImageView picture = new ImageView(context);
+                picture.setBackground(Ui.rounded(context, R.color.capture_background, 12));
                 picture.setImageDrawable(thumbnail(context, style));
                 picture.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 tile.addView(picture, new LinearLayout.LayoutParams(-1, Ui.dp(context, 44)));
