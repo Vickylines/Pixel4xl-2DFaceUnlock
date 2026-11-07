@@ -44,6 +44,7 @@ public final class UnlockFaceAnimationView extends View {
     private final RectF pillBounds = new RectF();
     private final float density;
     private final ValueAnimator ticker;
+    private final LockscreenStyleRenderer accentRenderer = new LockscreenStyleRenderer();
 
     private int state = SEARCHING;
     private int visualStyle;
@@ -51,6 +52,8 @@ public final class UnlockFaceAnimationView extends View {
     private float outcomePhase;
     private long stateStartedAt;
     private long attachedAt;
+    private boolean visible = true;
+    private View animationHost;
 
     public UnlockFaceAnimationView(Context context) {
         this(context, STYLE_FACE_ID);
@@ -101,6 +104,10 @@ public final class UnlockFaceAnimationView extends View {
         invalidate();
     }
 
+    void bindAnimationHost(View host) {
+        animationHost = host;
+    }
+
     public void showSuccess() {
         if (state != SEARCHING) {
             return;
@@ -115,7 +122,7 @@ public final class UnlockFaceAnimationView extends View {
     void restartSearching() {
         state = SEARCHING;
         setContentDescription("正在进行人脸识别");
-        if (isAttachedToWindow() && ValueAnimator.areAnimatorsEnabled() && !ticker.isStarted()) ticker.start();
+        resumeTicker();
         invalidate();
     }
 
@@ -140,9 +147,7 @@ public final class UnlockFaceAnimationView extends View {
             setScaleY(1f);
             return;
         }
-        if (!ticker.isStarted()) {
-            ticker.start();
-        }
+        resumeTicker();
         setAlpha(0f);
         float initialScale = 0.94f;
         setScaleX(initialScale);
@@ -158,10 +163,22 @@ public final class UnlockFaceAnimationView extends View {
 
     @Override public void onVisibilityAggregated(boolean visible) {
         super.onVisibilityAggregated(visible);
+        if (animationHost != null) visible = animationHost.isShown();
+        this.visible = visible;
         if (!isAttachedToWindow()) return;
         if (visible && ValueAnimator.areAnimatorsEnabled()) {
-            if (!ticker.isStarted()) ticker.start();
+            resumeTicker();
         } else ticker.cancel();
+    }
+
+    private void resumeTicker() {
+        // ViewGroupOverlay has no ordinary parent chain. Its host supplies visibility.
+        View host = animationHost == null ? this : animationHost;
+        if (!isAttachedToWindow() || !visible || host.getWindowVisibility() != VISIBLE || !ValueAnimator.areAnimatorsEnabled()
+                || ticker.isStarted() || (state != SEARCHING && transitionProgress() >= 1f)) return;
+        float previousPhase = phase;
+        ticker.start();
+        ticker.setCurrentFraction(previousPhase);
     }
 
     @Override
@@ -189,14 +206,14 @@ public final class UnlockFaceAnimationView extends View {
         float progress = state == SEARCHING ? 0f : transitionProgress();
 
         int save = canvas.save();
-        if (state == FAILURE && visualStyle != AnimationStyle.MINIMAL) {
+        if (state == FAILURE && visualStyle <= AnimationStyle.ISLAND) {
             float shake = (float) Math.sin(progress * Math.PI * 7.0)
                     * (1f - progress) * dp(1.55f);
             canvas.translate(shake, 0f);
         }
 
         if (visualStyle >= AnimationStyle.GLOW) {
-            drawNewStyle(canvas, cx, cy, breath, progress);
+            drawNewStyle(canvas, cx, cy, progress);
         } else if (visualStyle == STYLE_DYNAMIC_ISLAND) {
             float islandY = cy + dp(0.32f)
                     * (float) Math.sin(phase * Math.PI * 2.0);
@@ -214,149 +231,14 @@ public final class UnlockFaceAnimationView extends View {
         canvas.restoreToCount(save);
     }
 
-    private void drawNewStyle(Canvas canvas, float cx, float cy, float breath, float progress) {
-        float motionPhase = state == SEARCHING ? phase : outcomePhase;
-        int accent = stateAccent(Color.rgb(143, 225, 244), progress);
-        switch (visualStyle) {
-            case AnimationStyle.GLOW:
-                drawGlow(canvas, cx, cy, breath, progress, accent);
-                break;
-            case AnimationStyle.ORBIT:
-                drawOrbits(canvas, cx, cy, motionPhase, progress, accent);
-                break;
-            case AnimationStyle.MINIMAL:
-                drawMinimal(canvas, cx, cy, motionPhase, progress, accent);
-                break;
-            case AnimationStyle.DOTS:
-                drawDots(canvas, cx, cy, motionPhase, progress, accent);
-                break;
-        }
-    }
-
-    private int stateAccent(int searching, float progress) {
-        return state == SEARCHING ? searching : blend(searching,
-                state == SUCCESS ? Color.rgb(98, 232, 163) : Color.rgb(255, 133, 123),
-                easeOut(progress));
-    }
-
-    private void drawGlow(Canvas canvas, float cx, float cy, float breath, float progress,
-            int accent) {
-        float pulse = state == SEARCHING ? breath
-                : lerp(0.5f + 0.5f * (float) Math.sin(outcomePhase * Math.PI * 2), 0.35f,
-                        easeOut(progress));
-        float radius = 28f + 1.8f * pulse;
-        haloPaint.setStyle(Paint.Style.STROKE);
-        // Several low-opacity edges keep the halo soft without a software blur or offscreen layer.
-        for (int i = 4; i >= 1; i--) {
-            haloPaint.setStrokeWidth(dp(i * 1.65f));
-            haloPaint.setColor(withAlpha(accent, 5 + (4 - i) * 3));
-            canvas.drawCircle(cx, cy, dp(radius), haloPaint);
-        }
-        canvas.drawCircle(cx, cy, dp(radius - 1f), backgroundPaint);
-        tintPaint.setColor(withAlpha(accent, Math.round(13f + 11f * pulse)));
-        canvas.drawCircle(cx, cy, dp(radius - 1f), tintPaint);
-        haloPaint.setStrokeWidth(dp(0.85f));
-        haloPaint.setColor(withAlpha(accent, Math.round(90f + 50f * pulse)));
-        canvas.drawCircle(cx, cy, dp(radius), haloPaint);
-        drawStateGlyph(canvas, cx, cy, pulse, progress, 0.84f);
-    }
-
-    private void drawOrbits(Canvas canvas, float cx, float cy, float motionPhase,
-            float progress, int accent) {
-        float gather = easeOut(progress);
-        float radiusX = dp(lerp(31f, 25f, gather));
-        float radiusY = dp(lerp(14.5f, 25f, gather));
-        canvas.drawCircle(cx, cy, dp(lerp(18.5f, 25f, gather)), backgroundPaint);
-        for (int i = 0; i < 2; i++) {
-            int saved = canvas.save();
-            float direction = i == 0 ? 1f : -1f;
-            float tilt = direction * (34f + 8f * (float) Math.sin(motionPhase * Math.PI * 2));
-            canvas.rotate(tilt * (1f - gather), cx, cy);
-            arcBounds.set(cx - radiusX, cy - radiusY, cx + radiusX, cy + radiusY);
-            orbitPaint.setStyle(Paint.Style.STROKE);
-            orbitPaint.setStrokeWidth(dp(1.05f));
-            orbitPaint.setColor(withAlpha(accent, i == 0 ? 115 : 62));
-            canvas.drawOval(arcBounds, orbitPaint);
-            double angle = motionPhase * Math.PI * 2 * direction + i * Math.PI;
-            float x = cx + radiusX * (float) Math.cos(angle);
-            float y = cy + radiusY * (float) Math.sin(angle);
-            orbitPaint.setStyle(Paint.Style.FILL);
-            orbitPaint.setColor(withAlpha(accent, Math.round(245f * (1f - gather))));
-            canvas.drawCircle(x, y, dp(i == 0 ? 2.35f : 1.65f), orbitPaint);
-            canvas.restoreToCount(saved);
-        }
-        drawStateGlyph(canvas, cx, cy, 0.5f, progress, lerp(0.64f, 0.92f, gather));
-    }
-
-    private void drawMinimal(Canvas canvas, float cx, float cy, float motionPhase,
-            float progress, int accent) {
-        pillBounds.set(cx - dp(27f), cy - dp(27f), cx + dp(27f), cy + dp(27f));
-        canvas.drawRoundRect(pillBounds, dp(15f), dp(15f), backgroundPaint);
-        islandBorderPaint.setStrokeWidth(dp(0.8f));
-        islandBorderPaint.setColor(state == SEARCHING ? Color.argb(80, 235, 242, 250)
-                : withAlpha(accent, 120));
-        canvas.drawRoundRect(pillBounds, dp(15f), dp(15f), islandBorderPaint);
-        drawStateGlyph(canvas, cx, cy, 0f, progress, 0.76f);
-        float scanAlpha = 1f - smoothStep(0f, 0.25f, progress);
-        float travel = 0.5f - 0.5f * (float) Math.cos(motionPhase * Math.PI * 2);
-        float scanY = cy + dp(lerp(-10f, 10f, travel));
-        scanPaint.setStrokeWidth(dp(1f));
-        scanPaint.setColor(withAlpha(accent, Math.round(155f * scanAlpha)));
-        canvas.drawLine(cx - dp(9f), scanY, cx + dp(9f), scanY, scanPaint);
-    }
-
-    private static final float[] CHECK_X = {-8.1f, -5f, -1.9f, 3.95f, 9.8f};
-    private static final float[] CHECK_Y = {0f, 3f, 6f, -0.85f, -7.7f};
-
-    private void drawDots(Canvas canvas, float cx, float cy, float motionPhase,
-            float progress, int accent) {
-        float gather = easeOut(clamp(progress / 0.7f));
-        float halfWidth = dp(lerp(48f, 29f, gather));
-        pillBounds.set(cx - halfWidth, cy - dp(22f), cx + halfWidth, cy + dp(22f));
-        canvas.drawRoundRect(pillBounds, dp(22f), dp(22f), backgroundPaint);
-        islandBorderPaint.setStrokeWidth(dp(0.8f));
-        islandBorderPaint.setColor(withAlpha(accent, 62));
-        canvas.drawRoundRect(pillBounds, dp(22f), dp(22f), islandBorderPaint);
-        float dotsAlpha = 1f - smoothStep(state == SUCCESS ? 0.64f : 0.12f,
-                state == SUCCESS ? 1f : 0.48f, progress);
-        for (int i = 0; i < 5; i++) {
-            float wave = (float) Math.sin(motionPhase * Math.PI * 2 - i * 0.65f);
-            float startX = (i - 2) * 13f;
-            float startY = wave * 3.6f;
-            float x = lerp(startX, state == SUCCESS ? CHECK_X[i] : 0f, gather);
-            float y = lerp(startY, state == SUCCESS ? CHECK_Y[i] : 0f, gather);
-            float radius = lerp(3.2f + 0.45f * wave, 1.4f, gather);
-            glyphPaint.setStyle(Paint.Style.FILL);
-            glyphPaint.setColor(withAlpha(accent, Math.round((205f + 40f * wave) * dotsAlpha)));
-            canvas.drawCircle(cx + dp(x), cy + dp(y), dp(radius), glyphPaint);
-        }
-        if (state == SUCCESS) {
-            drawCheck(canvas, cx, cy, smoothStep(0.44f, 0.94f, progress));
-        } else if (state == FAILURE) {
-            drawCross(canvas, cx, cy, easeOut(clamp((progress - 0.22f) / 0.55f)));
-        }
-    }
-
-    private void drawStateGlyph(Canvas canvas, float cx, float cy, float breath,
-            float progress, float scale) {
+    private void drawNewStyle(Canvas canvas, float cx, float cy, float progress) {
         int saved = canvas.save();
-        canvas.scale(scale, scale, cx, cy);
-        float faceAlpha = state == SEARCHING ? 1f : 1f - smoothStep(0f, 0.28f, progress);
-        if (faceAlpha > 0f) drawFace(canvas, cx, cy, breath, Math.round(255f * faceAlpha));
-        if (state == SUCCESS) drawCheck(canvas, cx, cy,
-                easeOut(clamp((progress - 0.13f) / 0.6f)));
-        else if (state == FAILURE) drawCross(canvas, cx, cy,
-                easeOut(clamp((progress - 0.13f) / 0.55f)));
+        canvas.translate(cx, cy);
+        float fit = Math.min(density, getWidth() / 176f);
+        canvas.scale(fit, fit);
+        accentRenderer.draw(canvas, visualStyle, state,
+                state == SEARCHING ? phase : outcomePhase, progress);
         canvas.restoreToCount(saved);
-    }
-
-    private void drawCross(Canvas canvas, float cx, float cy, float progress) {
-        glyphPaint.setStyle(Paint.Style.STROKE);
-        glyphPaint.setStrokeWidth(dp(2.5f));
-        glyphPaint.setColor(Color.rgb(255, 133, 123));
-        float extent = dp(7.2f) * progress;
-        canvas.drawLine(cx - extent, cy - extent, cx + extent, cy + extent, glyphPaint);
-        canvas.drawLine(cx + extent, cy - extent, cx - extent, cy + extent, glyphPaint);
     }
 
     private void drawDynamicIsland(Canvas canvas, float cx, float cy, float progress) {

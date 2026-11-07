@@ -3,11 +3,10 @@ package com.yusd.pixel2dface;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
-import android.widget.FrameLayout;
+import android.view.animation.PathInterpolator;
 
 import java.lang.ref.WeakReference;
 
@@ -21,6 +20,13 @@ final class SystemUiFeedback {
     private volatile WeakReference<ViewGroup> root = new WeakReference<>(null);
     private UnlockFaceAnimationView animation;
     private int style = UnlockFaceAnimationView.STYLE_FACE_ID;
+    private boolean scanningRequested;
+    private final View.OnLayoutChangeListener layoutListener =
+            (v, l, t, r, b, ol, ot, or, ob) -> showWhenReady();
+    private final View.OnAttachStateChangeListener attachListener = new View.OnAttachStateChangeListener() {
+        @Override public void onViewAttachedToWindow(View view) { showWhenReady(); }
+        @Override public void onViewDetachedFromWindow(View view) { detachAnimation(); }
+    };
 
     SystemUiFeedback(Handler main) {
         this.main = main;
@@ -35,7 +41,19 @@ final class SystemUiFeedback {
     }
 
     void captureRoot(ViewGroup view) {
-        root = new WeakReference<>(view);
+        onMain(() -> {
+            ViewGroup previous = root.get();
+            if (previous == view) return;
+            detachAnimation();
+            if (previous != null) {
+                previous.removeOnLayoutChangeListener(layoutListener);
+                previous.removeOnAttachStateChangeListener(attachListener);
+            }
+            root = new WeakReference<>(view);
+            view.addOnLayoutChangeListener(layoutListener);
+            view.addOnAttachStateChangeListener(attachListener);
+            showWhenReady();
+        });
     }
 
     boolean isBouncerShowing() {
@@ -51,87 +69,91 @@ final class SystemUiFeedback {
         }
     }
 
-    void scanning() {
+    void scanning(int requestedStyle) {
         onMain(() -> {
-            ViewGroup container = root.get();
-            if (container == null) {
-                return;
-            }
-            removeCurrent();
-            try {
-                UnlockFaceAnimationView view = new UnlockFaceAnimationView(container.getContext(), style);
-                view.setClickable(false);
-                view.setFocusable(false);
-                view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-                float density = container.getResources().getDisplayMetrics().density;
-                int screenWidth = container.getResources().getConfiguration().screenWidthDp;
-                float widthDp = Math.min(176f, Math.max(144f,
-                        screenWidth > 0 ? screenWidth - 32f : 176f));
-                int height = Math.round(76f * density);
-                int statusBar = statusBarInset(container);
-                int top = Math.max(Math.round(90f * density), statusBar + Math.round(42f * density));
-                if (container.getHeight() > 0) {
-                    top = Math.min(top, Math.max(statusBar,
-                            container.getHeight() - height - Math.round(16f * density)));
-                }
-                FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-                        Math.round(widthDp * density), height, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-                params.topMargin = top;
-                container.addView(view, params);
-                view.bringToFront();
-                animation = view;
-            } catch (Throwable error) {
-                SystemUiLog.error("Native keyguard root rejected animation", error);
-            }
+            detachAnimation();
+            style = AnimationStyle.normalize(requestedStyle);
+            scanningRequested = true;
+            showWhenReady();
         });
     }
 
-    void style(int requested) {
-        onMain(() -> {
-            style = AnimationStyle.normalize(requested);
-            if (animation != null) {
-                animation.setVisualStyle(style);
+    private void showWhenReady() {
+        ViewGroup container = root.get();
+        if (container == null || !container.isAttachedToWindow() || container.getWidth() == 0) return;
+        try {
+            if (animation == null && scanningRequested) {
+                UnlockFaceAnimationView view = new UnlockFaceAnimationView(container.getContext(), style);
+                view.bindAnimationHost(container);
+                view.setClickable(false);
+                view.setFocusable(false);
+                view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+                // The native overlay draws above elevated notification/clock children and
+                // never takes touch or accessibility focus from the actual keyguard.
+                container.getOverlay().add(view);
+                animation = view;
             }
-        });
+            if (animation == null) return;
+            float density = container.getResources().getDisplayMetrics().density;
+            int width = Math.min(Math.round(176f * density), container.getWidth());
+            int height = Math.round(88f * density);
+            int statusBar = statusBarInset(container);
+            int top = Math.max(Math.round(84f * density), statusBar + Math.round(28f * density));
+            top = Math.min(top, Math.max(statusBar, container.getHeight() - height));
+            int left = (container.getWidth() - width) / 2;
+            animation.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+            animation.layout(left, top, left + width, top + height);
+        } catch (Throwable error) {
+            SystemUiLog.error("Native keyguard root rejected animation", error);
+        }
     }
 
     void success() {
         onMain(() -> {
+            scanningRequested = false;
             UnlockFaceAnimationView shown = animation;
             if (shown != null) {
                 shown.showSuccess();
-                main.postDelayed(() -> removeIfCurrent(shown), 720L);
+                main.postDelayed(() -> dismissIfCurrent(shown), 800L);
             }
         });
     }
 
     void failure() {
         onMain(() -> {
+            scanningRequested = false;
             UnlockFaceAnimationView shown = animation;
             if (shown != null) {
                 shown.showFailure("请使用密码");
                 // A previous session's delayed cleanup must never remove a new animation.
-                main.postDelayed(() -> removeIfCurrent(shown), 700L);
+                main.postDelayed(() -> dismissIfCurrent(shown), 800L);
             }
         });
     }
 
     void remove() {
-        onMain(this::removeCurrent);
+        onMain(() -> {
+            scanningRequested = false;
+            detachAnimation();
+        });
     }
 
-    private void removeIfCurrent(UnlockFaceAnimationView expected) {
-        if (animation == expected) {
-            removeCurrent();
-        }
+    private void dismissIfCurrent(UnlockFaceAnimationView expected) {
+        if (animation != expected) return;
+        expected.animate().alpha(0f).setDuration(160L)
+                .setInterpolator(new PathInterpolator(0.23f, 1f, 0.32f, 1f))
+                .withEndAction(() -> { if (animation == expected) detachAnimation(); }).start();
     }
 
-    private void removeCurrent() {
+    private void detachAnimation() {
         UnlockFaceAnimationView shown = animation;
         animation = null;
         try {
-            if (shown != null && shown.getParent() instanceof ViewGroup) {
-                ((ViewGroup) shown.getParent()).removeView(shown);
+            ViewGroup container = root.get();
+            if (shown != null && container != null) {
+                shown.animate().cancel();
+                container.getOverlay().remove(shown);
             }
         } catch (Throwable error) {
             SystemUiLog.error("Unable to detach keyguard animation", error);

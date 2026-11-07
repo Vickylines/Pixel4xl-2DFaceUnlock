@@ -224,7 +224,6 @@ final class SystemUiSessionCoordinator {
             }
         }
         trace("prepare_started", generation, "configuration IPC queued");
-        feedback.scanning();
         main.postDelayed(() -> cancelPreparation(generation, "configuration timeout"),
                 PREPARATION_TIMEOUT_MS);
         ipc.execute(() -> {
@@ -282,7 +281,6 @@ final class SystemUiSessionCoordinator {
             cancelPreparation(generation, "disabled, unenrolled, lockout or authorization rejected");
             return;
         }
-        feedback.style(state.getInt("animation_style", UnlockFaceAnimationView.STYLE_FACE_ID));
         Context attached = getContext();
         // Actual lock/power readiness replaces the fixed wake-to-launch delay. Preparation
         // already retries unreadable/not-yet-locked states within this wake's bounded window.
@@ -301,6 +299,8 @@ final class SystemUiSessionCoordinator {
             }
             session.configRevision = state.getLong("revision", -1L);
         }
+        // First visible frame uses this wake's persisted choice, never the previous wake's style.
+        feedback.scanning(state.getInt("animation_style", UnlockFaceAnimationView.STYLE_FACE_ID));
         try {
             Intent intent = new Intent().setComponent(new ComponentName(Constants.PACKAGE_NAME,
                     Constants.UNLOCK_HOST_ACTIVITY))
@@ -463,6 +463,7 @@ final class SystemUiSessionCoordinator {
             // The receiver requires the module's signature permission for every signal,
             // including revocations, so other apps cannot repeatedly cancel recognition.
             invalidate(getMonitor(), "module configuration changed");
+            heartbeat();
             return;
         }
         if (!Constants.ACTION_UNLOCK_RESULT.equals(action)
@@ -718,6 +719,7 @@ final class SystemUiSessionCoordinator {
                     return;
                 }
                 Bundle diagnostics = new Bundle();
+                diagnostics.putInt("module_version", BuildConfig.VERSION_CODE);
                 diagnostics.putString("platform", SystemUiCompat.platformLabel());
                 diagnostics.putBoolean("wake_method", wakeMethodInstalled);
                 diagnostics.putBoolean("power_broadcast", powerReceiver != null);

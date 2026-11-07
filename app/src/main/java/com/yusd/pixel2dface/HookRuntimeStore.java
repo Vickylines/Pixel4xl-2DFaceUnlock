@@ -12,12 +12,17 @@ import java.util.Properties;
 final class HookRuntimeStore {
     private static final String HEARTBEAT_FILE = "hook.heartbeat";
     private static final String COMPATIBILITY_FILE = "hook.compatibility";
+    private static final String VERSION_FILE = "hook.version";
     private static final String SESSION_FILE = "unlock.session";
     private static final int MAX_COMPATIBILITY_BYTES = 2048;
 
     private HookRuntimeStore() { }
 
     static boolean heartbeat(Context context, String compatibility) {
+        return heartbeat(context, compatibility, -1);
+    }
+
+    static boolean heartbeat(Context context, String compatibility, int moduleVersion) {
         if (compatibility != null
                 && compatibility.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
                 > MAX_COMPATIBILITY_BYTES) return false;
@@ -35,7 +40,28 @@ final class HookRuntimeStore {
                 AtomicStoreFiles.writeText(new File(directory, COMPATIBILITY_FILE),
                         compatibility.trim(), MAX_COMPATIBILITY_BYTES);
             }
+            if (moduleVersion >= 0) {
+                AtomicStoreFiles.writeText(new File(directory, VERSION_FILE),
+                        bootCount(context) + ":" + moduleVersion, 64);
+            }
             return true;
+        });
+    }
+
+    /** APK replacement does not replace classes already loaded by the SystemUI process. */
+    static int moduleVersion(Context context) {
+        return AtomicStoreFiles.locked(context, 0, directory -> {
+            String record = AtomicStoreFiles.readText(new File(directory, VERSION_FILE), 64);
+            if (record == null) return 0; // Versions before 0.11.1 did not report their runtime.
+            String[] fields = record.split(":", -1);
+            if (fields.length != 2) return 0;
+            try {
+                int boot = bootCount(context);
+                return boot >= 0 && Integer.parseInt(fields[0]) == boot
+                        ? Math.max(0, Integer.parseInt(fields[1])) : 0;
+            } catch (NumberFormatException invalidRecord) {
+                return 0;
+            }
         });
     }
 

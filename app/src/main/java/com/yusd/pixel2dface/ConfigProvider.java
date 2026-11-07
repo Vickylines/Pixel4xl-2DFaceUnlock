@@ -44,7 +44,8 @@ public final class ConfigProvider extends ContentProvider {
         if ("heartbeat".equals(method) && getContext() != null) {
             if (arg != null) throw new IllegalArgumentException("Heartbeat has no argument");
             String compatibility = buildCompatibilityReport(extras);
-            result.putBoolean("ok", TemplateStore.recordHookHeartbeat(getContext(), compatibility));
+            int version = moduleVersion(extras);
+            result.putBoolean("ok", HookRuntimeStore.heartbeat(getContext(), compatibility, version));
             return result;
         }
         if ("authorize_unlock".equals(method) && getContext() != null) {
@@ -67,11 +68,12 @@ public final class ConfigProvider extends ContentProvider {
         if (extras == null) {
             return null;
         }
-        if (extras.size() > 6) throw new IllegalArgumentException("Too many compatibility fields");
+        if (extras.size() > 7) throw new IllegalArgumentException("Too many compatibility fields");
         for (String key : extras.keySet()) {
             if (!("platform".equals(key) || "authentication_adapter".equals(key)
                     || "wake_method".equals(key) || "power_broadcast".equals(key)
-                    || "native_overlay".equals(key) || "occlusion_guard".equals(key))) {
+                    || "native_overlay".equals(key) || "occlusion_guard".equals(key)
+                    || "module_version".equals(key))) {
                 throw new IllegalArgumentException("Unsupported compatibility field");
             }
         }
@@ -86,6 +88,15 @@ public final class ConfigProvider extends ContentProvider {
                 + " · 认证适配：" + authentication
                 + "\n锁屏动画：" + capability(overlay)
                 + " · 相机宿主保护：" + capability(occlusion);
+    }
+
+    @SuppressWarnings("deprecation")
+    private static int moduleVersion(Bundle extras) {
+        if (extras == null || !extras.containsKey("module_version")) return 0;
+        Object version = extras.get("module_version");
+        if (!(version instanceof Integer) || (Integer) version < 1)
+            throw new IllegalArgumentException("Invalid module version");
+        return (Integer) version;
     }
 
     @SuppressWarnings("deprecation")

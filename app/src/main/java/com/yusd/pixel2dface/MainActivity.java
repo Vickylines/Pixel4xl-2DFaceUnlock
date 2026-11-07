@@ -54,6 +54,7 @@ public final class MainActivity extends ComponentActivity {
     private TemplateStore.StateSnapshot displayedState;
     private long heartbeat;
     private String compatibility = "";
+    private int hookVersion;
     private boolean rendering, saving, resumed;
     private int refreshGeneration;
 
@@ -222,11 +223,13 @@ public final class MainActivity extends ComponentActivity {
             TemplateStore.StateSnapshot state = TemplateStore.readState(this);
             long lastHeartbeat = TemplateStore.getHookHeartbeat(this);
             String hookCompatibility = TemplateStore.getHookCompatibility(this);
+            int runtimeVersion = HookRuntimeStore.moduleVersion(this);
             runOnUiThread(() -> {
                 if (!resumed || isFinishing() || isDestroyed() || request != refreshGeneration) return;
                 displayedState = state;
                 heartbeat = lastHeartbeat;
                 compatibility = hookCompatibility;
+                hookVersion = runtimeVersion;
                 renderState();
                 setControlsEnabled(!saving && !credentials.isPending());
             });
@@ -239,6 +242,9 @@ public final class MainActivity extends ComponentActivity {
     private boolean connectedThisBoot() {
         long age = System.currentTimeMillis() - heartbeat;
         return heartbeat > 0 && age >= 0 && age <= SystemClock.elapsedRealtime();
+    }
+    private boolean updatePending() {
+        return connectedThisBoot() && hookVersion != BuildConfig.VERSION_CODE;
     }
     private void renderState() {
         faceSection.setVisibility(displayedState.enrolled || displayedState.legacyTemplates
@@ -268,6 +274,7 @@ public final class MainActivity extends ComponentActivity {
             title = seconds < 60 ? seconds + " 秒后恢复解锁" : "稍后恢复解锁";
             action = "测试识别";
         } else if (!connectedThisBoot()) { title = "等待模块连接"; action = "连接锁屏模块"; }
+        else if (updatePending()) { title = "重启以完成更新"; action = "查看更新状态"; }
         else { title = "锁屏解锁已开启"; action = "测试识别"; }
         if (!statusView.getText().toString().equals(title)) statusView.setText(title);
         if (!primaryButton.getText().toString().equals(action)) primaryButton.setText(action);
@@ -281,7 +288,7 @@ public final class MainActivity extends ComponentActivity {
         else if (!cameraGranted()) requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA);
         else if (!VALIDATION && !displayedState.enabled)
             saveProtectedSetting(() -> TemplateStore.trySetEnabled(this, true));
-        else if (!VALIDATION && !connectedThisBoot()
+        else if (!VALIDATION && (!connectedThisBoot() || updatePending())
                 && displayedState.lockoutUntil <= System.currentTimeMillis()) showDiagnostics();
         else startCapture(Constants.MODE_TEST, REQUEST_TEST);
     }
@@ -311,6 +318,9 @@ public final class MainActivity extends ComponentActivity {
                         .format(new Date(heartbeat));
         String details = VALIDATION ? "独立验证版\n" : connection + "\n\n"
                 + "在 LSPosed 中启用本模块，作用域选择“系统界面”，然后重启。重启后的首次解锁需要输入 PIN。\n";
+        if (!VALIDATION && updatePending()) details = "锁屏仍在运行旧版模块。重启手机后，新动画和本次修复才会生效；之后切换动画无需重启。\n\n" + details;
+        if (!VALIDATION && hookVersion > 0) details += "\n锁屏运行版本：" + hookVersion
+                + " / 已安装版本：" + BuildConfig.VERSION_CODE + "\n";
         if (!compatibility.isEmpty()) details += "\n" + compatibility + "\n";
         details += "\nPixel 2D " + BuildConfig.VERSION_NAME + "\n" + Build.MODEL
                 + " / Android " + Build.VERSION.RELEASE
@@ -326,9 +336,12 @@ public final class MainActivity extends ComponentActivity {
     private void saveProtectedSetting(BooleanSupplier write) {
         if (saving || credentials.isPending()) return;
         setControlsEnabled(false);
-        credentials.request("确认修改人脸解锁设置", () -> saveSetting(write), this::refreshState);
+        credentials.request("确认修改人脸解锁设置", () -> saveSetting(write, true), this::refreshState);
     }
     private void saveSetting(BooleanSupplier write) {
+        saveSetting(write, false);
+    }
+    private void saveSetting(BooleanSupplier write, boolean protectedSetting) {
         if (saving) return;
         saving = true;
         setControlsEnabled(false);
@@ -338,7 +351,10 @@ public final class MainActivity extends ComponentActivity {
                 saving = false;
                 if (!resumed || isFinishing() || isDestroyed()) return;
                 if (!saved) Snackbar.make(primaryButton, "未能保存，原设置已保留", Snackbar.LENGTH_LONG)
-                        .setAction("重试", v -> saveProtectedSetting(write)).show();
+                        .setAction("重试", v -> {
+                            if (protectedSetting) saveProtectedSetting(write);
+                            else saveSetting(write);
+                        }).show();
                 refreshState();
             });
         });

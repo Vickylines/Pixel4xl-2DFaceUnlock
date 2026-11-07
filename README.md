@@ -14,6 +14,8 @@
 
 ## 下载
 
+- [下载 0.11.1 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.11.1/Pixel2DFaceUnlock-coral-0.11.1.apk) · [独立诊断包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.11.1/Pixel2DFaceUnlock-0.11.1-validation.apk) · [安装说明](dist/INSTALL-ZH-0.11.1.txt) · [SHA-256](dist/SHA256SUMS-0.11.1.txt)
+
 - [下载 0.11.0 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.11.0/Pixel2DFaceUnlock-coral-0.11.0.apk) · [独立验证包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.11.0/Pixel2DFaceUnlock-0.11.0-validation.apk) · [安装说明](dist/INSTALL-ZH-0.11.0.txt) · [SHA-256](dist/SHA256SUMS-0.11.0.txt)
 
 - [下载 0.10.2 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.2/Pixel2DFaceUnlock-coral-0.10.2.apk) · [独立验证包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.10.2/Pixel2DFaceUnlock-0.10.2-validation.apk) · [中文安装说明](dist/INSTALL-ZH-0.10.2.txt) · [SHA-256 校验](dist/SHA256SUMS-0.10.2.txt)
@@ -32,6 +34,14 @@
 “Android 10–16 适配”不等于所有组合都已真机验证：0.9.3 已在 Pixel 4 XL（coral）、LineageOS 23.2、Android 16 / API 36 完成覆盖安装、LSPosed/SystemUI 加载、正常识别上滑和闭眼失败后再次识别的人工复测。旧版双眼/单眼闭合拒绝及输入层检查记录保留在历史测试报告中。Android 10–15 的路径依据对应 AOSP SystemUI 数据结构进行了兼容编码和构建检查，仍需在各版本真机上逐一验证。非 Pixel、深度改造的厂商 SystemUI、访客／辅助用户、Android 9 以下及 Android 17 以上会安全停用钩子。
 
 详细状态见 [COMPATIBILITY.md](COMPATIBILITY.md)。
+
+## 0.11.1 锁屏动画修复
+
+覆盖升级后请先重启手机一次，让 SystemUI 加载新模块；新版会核对锁屏实际运行版本，未完成更新时显示“重启以完成更新”。之后选择动画并按“使用此动画”，下次亮屏生效。
+
+保留面容光环和灵动岛，重做光幕、星轨、线条、点阵四种样式。修复首次显示沿用旧样式、锁屏容器晚到或替换时漏挂动画、覆盖层不刷新及旧退出回调误删新动画的问题。选择、三态预览和应用集中在同一页，返回保留原设置，大字体可滚动，快速切换不会堆积过渡。
+
+222 项回归检查、发布构建通过，Release Lint 无错误。Android 15 模拟器完成六种原生覆盖层显示与清理、四种新样式交互、深浅色、大字体、横屏及关闭动画检查。本次未完成 Pixel 真机 LSPosed 锁屏复测。模型、识别阈值、认证要求与有效 v3/v4 模板不变。详见 [发布说明](dist/RELEASE-NOTES-0.11.1.md)。
 
 ## 0.11.0 使用体验
 
@@ -123,7 +133,7 @@
 1. 覆盖安装 APK，不要卸载旧版；相同包名升级会保留设置和旧模板文件。
 2. 在 LSPosed 中启用本模块，作用域只选择“系统界面”。
 3. 重启手机或重启 SystemUI；重启后的第一次解锁先输入 PIN。
-4. 打开“Pixel 2D 人脸解锁”，确认“LSPosed 钩子已加载”，并查看下面的运行时适配报告。
+4. 打开“Pixel 2D 人脸解锁”，检查首页连接状态；若显示“重启以完成更新”，重启后再查看右上角“连接与关于”。
 5. 已有有效 v3/v4 模板无需重新录入；从 0.7.x 或更早版本升级时，按提示重新录入一次以建立 v4 模板。自然看向屏幕即可，不要求眨眼或转头。
 
 0.10.2 会保留已有 v3/v4 模板；新录入建立 MobileFaceNet v4 模板。验证版拥有独立数据，不能替代正式模块，也不会把录入自动同步到正式模块。升级验证包后它不再作为 LSPosed 模块显示；请确认启用的是正式包 `com.yusd.pixel2dface`，作用域只选系统界面。
