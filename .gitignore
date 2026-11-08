@@ -1,0 +1,27 @@
+# Gradle / Android build outputs
+.gradle/
+**/build/
+local.properties
+.idea/
+*.iml
+.externalNativeBuild/
+.cxx/
+
+# Signing material and local configuration
+*.jks
+*.keystore
+keystore.properties
+
+# Device-only and local test data
+device-backups/
+test-artifacts/
+.toolchain/
+
+# Release binaries are published as GitHub Release assets.
+dist/*.apk
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+*.log
+
