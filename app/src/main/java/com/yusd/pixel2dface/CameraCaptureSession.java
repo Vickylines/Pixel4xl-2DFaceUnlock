@@ -27,7 +27,6 @@ import java.util.concurrent.RejectedExecutionException;
 @androidx.annotation.OptIn(markerClass = androidx.camera.core.ExperimentalGetImage.class)
 final class CameraCaptureSession {
     interface Listener {
-        void onEngineReady(long elapsedMs);
         void onFrame(ImageProxy image, int rotation, List<Face> faces, long capturedAtMs);
         void onRejectedFrame(String reason);
         void onCameraError(String message);
@@ -76,8 +75,30 @@ final class CameraCaptureSession {
             }
             detector = created;
         }
-        listener.onEngineReady(SystemClock.elapsedRealtime());
+        // Warm-up owns the same in-flight gate as a real image. Cancellation cannot close
+        // the native clients until it finishes, and no warm-up result reaches recognition.
+        if (!gate.acquireFrame()) return;
         main.post(() -> bind(previewView));
+        long warmUpAt = SystemClock.elapsedRealtime();
+        try {
+            created.warmUp().addOnCompleteListener(analyzer, task -> {
+                try {
+                    if (!task.isSuccessful() && !gate.isClosing()) {
+                        Log.w("Pixel2DFace", "Detector warm-up failed", task.getException());
+                        listener.onCameraError("人脸引擎初始化失败");
+                    }
+                    Log.i("Pixel2DFace", "Detector warm-up elapsedMs="
+                            + (SystemClock.elapsedRealtime() - warmUpAt));
+                } finally {
+                    gate.completeFrame();
+                    releaseIfIdle();
+                }
+            });
+        } catch (RuntimeException | LinkageError failure) {
+            gate.completeFrame();
+            releaseIfIdle();
+            throw failure;
+        }
     }
 
     private void bind(PreviewView previewView) {

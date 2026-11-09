@@ -109,6 +109,33 @@ public final class SingleFaceDetectorTest {
         assertTrue(detail.closed);
     }
 
+    @Test public void warmUpLoadsBothClientsWithoutReusingACameraImage() {
+        Task<List<Face>> task = detector.warmUp();
+        assertNotSame(image, population.received);
+        assertEquals(64, population.received.getWidth());
+        population.result.setResult(List.of());
+        assertSame(population.received, detail.received);
+        assertFalse(task.isComplete());
+        detail.result.setResult(List.of());
+        assertTrue(task.isSuccessful());
+    }
+
+    @Test public void cancelledWarmUpDoesNotStartTheSecondClient() {
+        Task<List<Face>> task = detector.warmUp();
+        closing.set(true);
+        population.result.setResult(List.of());
+        assertTrue(task.isComplete());
+        assertEquals(0, detail.calls);
+    }
+
+    @Test public void warmUpFailurePropagatesToTheCaptureOwner() {
+        Task<List<Face>> task = detector.warmUp();
+        IllegalStateException failure = new IllegalStateException("native model failed");
+        population.result.setException(failure);
+        assertSame(failure, task.getException());
+        assertEquals(0, detail.calls);
+    }
+
     private static Face face(int left) {
         // Synthetic ML Kit result using the constructor in the project's pinned SDK.
         return new Face(new zzow(0, new Rect(left, 40, left + 120, 180),

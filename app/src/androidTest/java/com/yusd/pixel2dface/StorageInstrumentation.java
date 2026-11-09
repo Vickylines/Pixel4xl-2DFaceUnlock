@@ -29,15 +29,23 @@ public final class StorageInstrumentation extends Instrumentation {
     private final AtomicInteger checks = new AtomicInteger();
     private final List<File> testRoots = new ArrayList<>();
     private final AtomicInteger configurationSignals = new AtomicInteger();
+    private boolean benchmark;
 
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
+        benchmark = arguments != null && "true".equals(arguments.getString("benchmark"));
         start();
     }
 
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (benchmark) {
+                InferenceBenchmark.run(getTargetContext(), result);
+                result.putString("result", "PASS");
+                finish(Activity.RESULT_OK, result);
+                return;
+            }
             packageIsolation();
             Context context = isolatedContext();
             roundTripAndConcurrentUpdates(context);

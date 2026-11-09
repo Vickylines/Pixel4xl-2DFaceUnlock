@@ -148,11 +148,6 @@ public class FaceCaptureActivity extends ComponentActivity {
         if (initialized || finished.get()) return;
         initialized = true;
         camera = new CameraCaptureSession(this, new CameraCaptureSession.Listener() {
-            @Override public void onEngineReady(long elapsedMs) {
-                engineReadyAt = elapsedMs;
-                android.util.Log.i("Pixel2DFace", "Capture engine ready mode=" + mode
-                        + " initMs=" + (elapsedMs - createdAt));
-            }
             @Override public void onFrame(ImageProxy image, int rotation, List<Face> faces,
                     long capturedAtMs) { processFrame(image, rotation, faces, capturedAtMs); }
             @Override public void onRejectedFrame(String reason) {
@@ -187,7 +182,6 @@ public class FaceCaptureActivity extends ComponentActivity {
                     recognition = new RecognitionEngine(settings.model, settings.threshold);
                     generation = recognition.beginSession(createdAt);
                 }
-                extractor.initialize(this, isEnrollment() || settings.model instanceof EmbeddingIdentity);
                 main.post(() -> {
                     if (finished.get() || isFinishing() || isDestroyed()) return;
                     if (isUnlock()) {
@@ -199,8 +193,20 @@ public class FaceCaptureActivity extends ComponentActivity {
                         android.util.Log.i("Pixel2DFace", "Capture host attached");
                     }
                     camera.execute(() -> {
-                        try { camera.start(content == null ? null : content.preview); }
-                        catch (RuntimeException failure) { finishFailure(false, "人脸引擎初始化失败"); }
+                        try {
+                            // Authorization and host readiness are complete. Camera opening and
+                            // native detector loading can overlap model setup; every real frame
+                            // queues behind this initializer on the same serial analysis lane.
+                            camera.start(content == null ? null : content.preview);
+                            extractor.initialize(this,
+                                    isEnrollment() || settings.model instanceof EmbeddingIdentity);
+                            engineReadyAt = SystemClock.elapsedRealtime();
+                            android.util.Log.i("Pixel2DFace", "Capture engine ready mode=" + mode
+                                    + " initMs=" + (engineReadyAt - createdAt));
+                        } catch (Exception | LinkageError failure) {
+                            android.util.Log.w("Pixel2DFace", "Capture initialization failed", failure);
+                            finishFailure(false, "人脸引擎初始化失败");
+                        }
                     });
                 });
             } catch (Exception | LinkageError failure) {

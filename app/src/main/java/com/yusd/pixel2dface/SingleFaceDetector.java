@@ -1,11 +1,13 @@
 package com.yusd.pixel2dface;
 
+import android.graphics.ImageFormat;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.face.Face;
 import com.google.mlkit.vision.face.FaceDetector;
 import java.util.List;
+import java.util.Arrays;
 import java.util.concurrent.Executor;
 import java.util.function.BooleanSupplier;
 
@@ -31,6 +33,16 @@ final class SingleFaceDetector implements AutoCloseable {
             if (closing.getAsBoolean() || faces.size() != 1) return Tasks.forResult(faces);
             return detail.process(image);
         });
+    }
+
+    /** Load both native detectors while the camera opens. These results are never evidence. */
+    Task<List<Face>> warmUp() {
+        byte[] blank = new byte[64 * 64 * 3 / 2];
+        Arrays.fill(blank, 0, 64 * 64, (byte) 16);
+        Arrays.fill(blank, 64 * 64, blank.length, (byte) 128);
+        InputImage image = InputImage.fromByteArray(blank, 64, 64, 0, ImageFormat.NV21);
+        return population.process(image).onSuccessTask(executor, ignored ->
+                closing.getAsBoolean() ? Tasks.forResult(List.of()) : detail.process(image));
     }
 
     @Override public void close() {

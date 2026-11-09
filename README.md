@@ -4,9 +4,9 @@
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel4xl-2DFaceUnlock)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **[0.13.2 稳定版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.13.2)**：检查全部生产源码，修复损坏面容数据的恢复入口和歪头时眼部开合测量失真。通用安装包支持 Android 10–17，详见 [发布说明](dist/RELEASE-NOTES-0.13.2.md)。
+> **[0.13.3 稳定版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.13.3)**：复用已校验的只读模型，重叠相机启动、检测器预热和模型初始化，缩短识别等待。现有安全门槛保持原值，详见 [发布说明](dist/RELEASE-NOTES-0.13.3.md)。
 
-一瞥是 Pixel4xl 2D Face Unlock 的新名字。0.13.2 通用构建支持 Android 10–17，面向已 Root、已安装 LSPosed 且保留兼容 SystemUI 接口的设备；同一 APK 包含 ARM32、ARM64、x86 和 x86_64。锁屏接口按运行时能力选择，不再限制 Google Pixel 品牌。
+一瞥是 Pixel4xl 2D Face Unlock 的新名字。0.13.3 通用构建支持 Android 10–17，面向已 Root、已安装 LSPosed 且保留兼容 SystemUI 接口的设备；同一 APK 包含 ARM32、ARM64、x86 和 x86_64。锁屏接口按运行时能力选择，不再限制 Google Pixel 品牌。
 
 识别使用离线 MobileFaceNet 与 v4 模板，已有 v3 模板继续使用纹理与几何双信号后端。相机、识别、存储与 SystemUI 会话分开管理；识别与一次性授权、系统弱认证策略及锁屏退出分别复核。适配范围见 [兼容性矩阵](COMPATIBILITY.md)。
 
@@ -15,6 +15,8 @@
 > 本项目不是 Google、LineageOS、Magisk 或 LSPosed 的官方项目。普通 RGB 2D 人脸可能被照片或视频绕过，只适合便利解锁。
 
 ## 下载
+
+- [下载 0.13.3 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.3/Pixel2DFaceUnlock-universal-0.13.3.apk) · [独立诊断包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.3/Pixel2DFaceUnlock-0.13.3-validation.apk) · [安装说明](dist/INSTALL-ZH-0.13.3.txt) · [SHA-256](dist/SHA256SUMS-0.13.3.txt)
 
 - [下载 0.13.2 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.2/Pixel2DFaceUnlock-universal-0.13.2.apk) · [独立诊断包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.2/Pixel2DFaceUnlock-0.13.2-validation.apk) · [安装说明](dist/INSTALL-ZH-0.13.2.txt) · [SHA-256](dist/SHA256SUMS-0.13.2.txt)
 
@@ -29,6 +31,10 @@
 保留版本在 Pixel 4 XL / LineageOS 24.0 / Android 17 上的验证记录见各版发布说明。其他 Android 版本与厂商 ROM 的状态见兼容性矩阵；关键认证接口不兼容时保持锁定。访客／辅助用户、Android 9 及更早版本、Android 18 及后续版本不在当前适配范围。
 
 详细状态见 [COMPATIBILITY.md](COMPATIBILITY.md)。
+
+## 0.13.3 启动提速
+
+相机开启、检测器预热和模型初始化重叠进行，后续会话复用已校验的只读模型权重。Pixel 4 XL 上重复初始化中位数从 28 ms 降至 8 ms，44 组输入的识别向量与旧路径逐项一致。241 项回归检查、329 项真机断言及关屏复测通过。用户确认三次正常识别均能进入桌面且体感更快，识别耗时中位数 1.13 秒。身份阈值、睁眼、多人拒绝、连续帧和系统认证要求保持不变，详见 [性能验证记录](dist/PERFORMANCE-0.13.3-20261109.md)。
 
 ## 0.13.2 全量检查
 
