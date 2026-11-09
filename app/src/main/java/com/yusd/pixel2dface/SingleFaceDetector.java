@@ -11,7 +11,7 @@ import java.util.Arrays;
 import java.util.concurrent.Executor;
 import java.util.function.BooleanSupplier;
 
-/** Counts faces before contour mode, which only returns the most prominent face. */
+/** Joins full-frame counting with contour mode, which only returns the most prominent face. */
 final class SingleFaceDetector implements AutoCloseable {
     private final FaceDetector population;
     private final FaceDetector detail;
@@ -27,12 +27,26 @@ final class SingleFaceDetector implements AutoCloseable {
     }
 
     Task<List<Face>> process(InputImage image) {
-        // Both stages inspect the same still-open CameraX image. A failed stage propagates
-        // to the existing frame-rejection path; it cannot fall back to single-face evidence.
-        return population.process(image).onSuccessTask(executor, faces -> {
-            if (closing.getAsBoolean() || faces.size() != 1) return Tasks.forResult(faces);
-            return detail.process(image);
+        if (closing.getAsBoolean()) return Tasks.forResult(List.of());
+        Task<List<Face>> counted = processSafely(population, image);
+        Task<List<Face>> detailed = processSafely(detail, image);
+        // Both readers own the SAME still-open image. Wait for both, including failures:
+        // returning early would let CameraX close a plane still used by the other client.
+        return Tasks.whenAllComplete(executor, counted, detailed).continueWith(executor, completed -> {
+            List<Face> faces = counted.getResult(Exception.class);
+            List<Face> contours = detailed.getResult(Exception.class);
+            return closing.getAsBoolean() || faces.size() != 1 ? faces : contours;
         });
+    }
+
+    private static Task<List<Face>> processSafely(FaceDetector detector, InputImage image) {
+        try { return detector.process(image); }
+        catch (RuntimeException failure) {
+            // A synchronous SDK failure must also join the other already-started reader.
+            return Tasks.forException(failure);
+        } catch (LinkageError failure) {
+            return Tasks.forException(new IllegalStateException("Native detector could not start", failure));
+        }
     }
 
     /** Load both native detectors while the camera opens. These results are never evidence. */
@@ -41,8 +55,7 @@ final class SingleFaceDetector implements AutoCloseable {
         Arrays.fill(blank, 0, 64 * 64, (byte) 16);
         Arrays.fill(blank, 64 * 64, blank.length, (byte) 128);
         InputImage image = InputImage.fromByteArray(blank, 64, 64, 0, ImageFormat.NV21);
-        return population.process(image).onSuccessTask(executor, ignored ->
-                closing.getAsBoolean() ? Tasks.forResult(List.of()) : detail.process(image));
+        return process(image);
     }
 
     @Override public void close() {

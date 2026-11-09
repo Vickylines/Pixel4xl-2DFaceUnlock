@@ -4,9 +4,9 @@
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel4xl-2DFaceUnlock)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **[0.13.3 稳定版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.13.3)**：复用已校验的只读模型，重叠相机启动、检测器预热和模型初始化，缩短识别等待。现有安全门槛保持原值，详见 [发布说明](dist/RELEASE-NOTES-0.13.3.md)。
+> **[0.13.4 稳定版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.13.4)**：支持横屏与倒置识别，人数和细节检测并行处理同一帧，缩短检测等待。身份、睁眼、连续确认及系统授权要求保持原值，详见 [发布说明](dist/RELEASE-NOTES-0.13.4.md)。
 
-一瞥是 Pixel4xl 2D Face Unlock 的新名字。0.13.3 通用构建支持 Android 10–17，面向已 Root、已安装 LSPosed 且保留兼容 SystemUI 接口的设备；同一 APK 包含 ARM32、ARM64、x86 和 x86_64。锁屏接口按运行时能力选择，不再限制 Google Pixel 品牌。
+一瞥是 Pixel4xl 2D Face Unlock 的新名字。0.13.4 通用构建支持 Android 10–17，面向已 Root、已安装 LSPosed 且保留兼容 SystemUI 接口的设备；同一 APK 包含 ARM32、ARM64、x86 和 x86_64。锁屏接口按运行时能力选择，不再限制 Google Pixel 品牌。
 
 识别使用离线 MobileFaceNet 与 v4 模板，已有 v3 模板继续使用纹理与几何双信号后端。相机、识别、存储与 SystemUI 会话分开管理；识别与一次性授权、系统弱认证策略及锁屏退出分别复核。适配范围见 [兼容性矩阵](COMPATIBILITY.md)。
 
@@ -15,6 +15,10 @@
 > 本项目不是 Google、LineageOS、Magisk 或 LSPosed 的官方项目。普通 RGB 2D 人脸可能被照片或视频绕过，只适合便利解锁。
 
 ## 下载
+
+- [下载 0.13.4 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.4/Pixel2DFaceUnlock-universal-0.13.4.apk) · [安装说明](dist/INSTALL-ZH-0.13.4.txt) · [SHA-256](dist/SHA256SUMS-0.13.4.txt)
+
+日常使用安装正式模块即可。[0.13.4 独立诊断包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.4/Pixel2DFaceUnlock-0.13.4-validation.apk)用于开发测试和故障排查，使用独立数据目录，不接入 LSPosed 锁屏解锁。
 
 - [下载 0.13.3 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.3/Pixel2DFaceUnlock-universal-0.13.3.apk) · [独立诊断包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.3/Pixel2DFaceUnlock-0.13.3-validation.apk) · [安装说明](dist/INSTALL-ZH-0.13.3.txt) · [SHA-256](dist/SHA256SUMS-0.13.3.txt)
 

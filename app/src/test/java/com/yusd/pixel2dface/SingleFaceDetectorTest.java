@@ -42,28 +42,30 @@ public final class SingleFaceDetectorTest {
                 480, 360, 0, ImageFormat.NV21);
     }
 
-    @Test public void multipleFacesNeverReachTheSingleFaceContourStage() {
+    @Test public void multipleFacesOverrideTheProminentFaceAfterBothReadersFinish() {
         Task<List<Face>> task = detector.process(image);
         List<Face> faces = List.of(face(0), face(160));
         population.result.setResult(faces);
+        assertFalse(task.isComplete());
+        detail.result.setResult(List.of(face(0)));
         assertSame(faces, task.getResult());
-        assertEquals(0, detail.calls);
         assertEquals(FrameQualityPolicy.Reason.MULTIPLE_FACES,
                 new FaceFrameExtractor().extract(null, 0, task.getResult()).reason);
     }
 
-    @Test public void noFaceSkipsContoursAndReportsNoFace() {
+    @Test public void noFaceCannotBeOverriddenByTheContourReader() {
         Task<List<Face>> task = detector.process(image);
         population.result.setResult(List.of());
+        assertFalse(task.isComplete());
+        detail.result.setResult(List.of(face(0)));
         assertTrue(task.getResult().isEmpty());
-        assertEquals(0, detail.calls);
         assertEquals(FrameQualityPolicy.Reason.NO_FACE,
                 new FaceFrameExtractor().extract(null, 0, task.getResult()).reason);
     }
 
     @Test public void oneFaceWaitsForDetailsFromTheSameImage() {
         Task<List<Face>> task = detector.process(image);
-        assertEquals(0, detail.calls);
+        assertEquals(1, detail.calls);
         population.result.setResult(List.of(face(0)));
         assertSame(image, population.received);
         assertSame(image, detail.received);
@@ -78,8 +80,9 @@ public final class SingleFaceDetectorTest {
         Task<List<Face>> task = detector.process(image);
         IllegalStateException failure = new IllegalStateException("counting failed");
         population.result.setException(failure);
+        assertFalse(task.isComplete());
+        detail.result.setResult(List.of(face(0)));
         assertSame(failure, task.getException());
-        assertEquals(0, detail.calls);
     }
 
     @Test public void contourFailureCannotReturnTheCountOnlyFace() {
@@ -91,12 +94,13 @@ public final class SingleFaceDetectorTest {
         assertFalse(task.isSuccessful());
     }
 
-    @Test public void stoppingDuringCountingDoesNotStartAnotherNativeTask() {
+    @Test public void cancellationWaitsForBothNativeReadersBeforeReleasingTheImage() {
         Task<List<Face>> task = detector.process(image);
         closing.set(true);
         population.result.setResult(List.of(face(0)));
+        assertFalse(task.isComplete());
+        detail.result.setResult(List.of(face(0)));
         assertTrue(task.isComplete());
-        assertEquals(0, detail.calls);
         detector.close();
         assertTrue(population.closed);
         assertTrue(detail.closed);
@@ -120,20 +124,63 @@ public final class SingleFaceDetectorTest {
         assertTrue(task.isSuccessful());
     }
 
-    @Test public void cancelledWarmUpDoesNotStartTheSecondClient() {
+    @Test public void cancelledWarmUpStillWaitsForBothClients() {
         Task<List<Face>> task = detector.warmUp();
         closing.set(true);
         population.result.setResult(List.of());
+        assertFalse(task.isComplete());
+        detail.result.setResult(List.of());
         assertTrue(task.isComplete());
-        assertEquals(0, detail.calls);
     }
 
     @Test public void warmUpFailurePropagatesToTheCaptureOwner() {
         Task<List<Face>> task = detector.warmUp();
         IllegalStateException failure = new IllegalStateException("native model failed");
         population.result.setException(failure);
+        assertFalse(task.isComplete());
+        detail.result.setResult(List.of());
         assertSame(failure, task.getException());
+    }
+
+    @Test public void earlyContoursCannotAuthenticateBeforeThePopulationCheck() {
+        Task<List<Face>> task = detector.process(image);
+        detail.result.setResult(List.of(face(0)));
+        assertFalse(task.isComplete());
+        List<Face> crowd = List.of(face(0), face(160));
+        population.result.setResult(crowd);
+        assertSame(crowd, task.getResult());
+    }
+
+    @Test public void earlyContourFailureStillWaitsForTheCountingReader() {
+        Task<List<Face>> task = detector.process(image);
+        IllegalStateException failure = new IllegalStateException("contours failed");
+        detail.result.setException(failure);
+        assertFalse(task.isComplete());
+        population.result.setResult(List.of(face(0)));
+        assertSame(failure, task.getException());
+    }
+
+    @Test public void synchronousSecondReaderFailureCannotCloseTheFirstReadersImage() {
+        detail.startFailure = new IllegalStateException("native start failed");
+        Task<List<Face>> task = detector.process(image);
+        assertFalse(task.isComplete());
+        population.result.setResult(List.of(face(0)));
+        assertSame(detail.startFailure, task.getException());
+    }
+
+    @Test public void closingSessionDoesNotStartNewReaders() {
+        closing.set(true);
+        assertTrue(detector.process(image).getResult().isEmpty());
+        assertEquals(0, population.calls);
         assertEquals(0, detail.calls);
+    }
+
+    @Test public void nativeLinkFailureAlsoWaitsForTheOtherReader() {
+        detail.linkFailure = new UnsatisfiedLinkError("native library unavailable");
+        Task<List<Face>> task = detector.process(image);
+        assertFalse(task.isComplete());
+        population.result.setResult(List.of(face(0)));
+        assertSame(detail.linkFailure, task.getException().getCause());
     }
 
     private static Face face(int left) {
@@ -149,10 +196,14 @@ public final class SingleFaceDetectorTest {
         int calls;
         boolean closed;
         boolean failClose;
+        RuntimeException startFailure;
+        LinkageError linkFailure;
 
         @Override public Task<List<Face>> process(InputImage input) {
             received = input;
             calls++;
+            if (startFailure != null) throw startFailure;
+            if (linkFailure != null) throw linkFailure;
             return result.getTask();
         }
         @Override public void close() {

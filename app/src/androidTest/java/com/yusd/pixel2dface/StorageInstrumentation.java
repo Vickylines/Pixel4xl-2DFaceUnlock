@@ -30,16 +30,24 @@ public final class StorageInstrumentation extends Instrumentation {
     private final List<File> testRoots = new ArrayList<>();
     private final AtomicInteger configurationSignals = new AtomicInteger();
     private boolean benchmark;
+    private boolean capturePipeline;
 
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
         benchmark = arguments != null && "true".equals(arguments.getString("benchmark"));
+        capturePipeline = arguments != null && "true".equals(arguments.getString("capturePipeline"));
         start();
     }
 
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (capturePipeline) {
+                CapturePipelineChecks.run(getContext(), result);
+                result.putString("result", "PASS");
+                finish(Activity.RESULT_OK, result);
+                return;
+            }
             if (benchmark) {
                 InferenceBenchmark.run(getTargetContext(), result);
                 result.putString("result", "PASS");

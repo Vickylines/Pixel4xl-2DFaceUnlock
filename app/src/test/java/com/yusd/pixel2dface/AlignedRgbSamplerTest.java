@@ -47,6 +47,46 @@ public final class AlignedRgbSamplerTest {
         assertTrue(Float.isNaN(sampler.brightness));
     }
 
+    @Test public void rectangularTexturedFramesProduceIdenticalCropsInAllFourDirections() {
+        int width = 144, height = 176;
+        byte[] upright = new byte[width * height];
+        for (int y = 0; y < height; y++) for (int x = 0; x < width; x++) {
+            upright[y * width + x] = (byte) (32 + (x * 13 + y * 7 + x * y) % 192);
+        }
+        byte[] reference = null;
+        float brightness = 0, contrast = 0, sharpness = 0;
+        float[] landmarks = FaceAlignment.CANONICAL.clone();
+        for (int i = 0; i < landmarks.length; i += 2) {
+            landmarks[i] += 16; landmarks[i + 1] += 24;
+        }
+        for (int rotation : new int[]{0, 90, 180, 270}) {
+            byte[] raw = upright;
+            int rawWidth = width, rawHeight = height;
+            // Rotate the source pixels counter-clockwise, independently of sampler mapping.
+            for (int turn = 0; turn < rotation / 90; turn++) {
+                byte[] next = new byte[raw.length];
+                for (int y = 0; y < rawHeight; y++) for (int x = 0; x < rawWidth; x++)
+                    next[(rawWidth - 1 - x) * rawHeight + y] = raw[y * rawWidth + x];
+                raw = next;
+                int swap = rawWidth; rawWidth = rawHeight; rawHeight = swap;
+            }
+            assertTrue(sampler.sample(ByteBuffer.wrap(raw), rawWidth, 1,
+                    plane(raw.length / 4, 128), rawWidth / 2, 1,
+                    plane(raw.length / 4, 128), rawWidth / 2, 1,
+                    rawWidth, rawHeight, rotation, FaceAlignment.fit(landmarks), output));
+            byte[] rgb = new byte[output.remaining()]; output.get(rgb);
+            if (reference == null) {
+                reference = rgb;
+                brightness = sampler.brightness; contrast = sampler.contrast; sharpness = sampler.sharpness;
+            } else {
+                assertArrayEquals("rotation=" + rotation, reference, rgb);
+                assertEquals(brightness, sampler.brightness, 0);
+                assertEquals(contrast, sampler.contrast, 0);
+                assertEquals(sharpness, sampler.sharpness, 0);
+            }
+        }
+    }
+
     @Test public void faceLeavingAnyEdgeIsRejectedWithoutAnExceptionOrStaleRgb() {
         for (int rotation : new int[]{0, 90, 180, 270}) {
             for (float[] offset : new float[][]{{-1, 8}, {18, 8}, {8, -1}, {8, 18}}) {

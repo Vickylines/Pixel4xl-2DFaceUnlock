@@ -12,13 +12,7 @@ final class FaceDetectorFactory {
     }
 
     static SingleFaceDetector create(Executor executor, BooleanSupplier closing) {
-        FaceDetector population = FaceDetection.getClient(new FaceDetectorOptions.Builder()
-                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
-                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
-                .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
-                .setMinFaceSize(0.10f)
-                .build());
+        FaceDetector population = FaceDetection.getClient(populationOptions());
         try {
             return new SingleFaceDetector(population, FaceDetection.getClient(detailOptions()),
                     executor, closing);
@@ -28,7 +22,17 @@ final class FaceDetectorFactory {
         }
     }
 
-    private static FaceDetectorOptions detailOptions() {
+    static FaceDetectorOptions populationOptions() {
+        return new FaceDetectorOptions.Builder()
+                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
+                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
+                .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
+                .setMinFaceSize(0.10f)
+                .build();
+    }
+
+    static FaceDetectorOptions detailOptions() {
         return new FaceDetectorOptions.Builder()
                 .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
                 .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)

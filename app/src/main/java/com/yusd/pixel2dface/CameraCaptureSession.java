@@ -5,6 +5,8 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 import android.util.Size;
+import android.hardware.SensorManager;
+import android.view.OrientationEventListener;
 
 import androidx.activity.ComponentActivity;
 import androidx.camera.core.CameraSelector;
@@ -40,6 +42,11 @@ final class CameraCaptureSession {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final CaptureSessionGate gate = new CaptureSessionGate();
     private final FrameTimestampNormalizer timestamps = new FrameTimestampNormalizer();
+    private final CaptureRotation rotation;
+    private final OrientationEventListener orientationListener;
+    private volatile long rotationGeneration;
+    private long lastFrameRotationGeneration = -1;
+    private int lastFrameRotation = -1;
     private final Object detectorLock = new Object();
     private SingleFaceDetector detector;
     // CameraX binding and unbinding are confined to the main thread.
@@ -48,10 +55,23 @@ final class CameraCaptureSession {
     private Preview preview;
     private long requestedAt;
     private boolean firstImageLogged;
+    private int detectedFrames;
+    private long totalDetectionMs;
+    private long totalEvaluationMs;
 
     CameraCaptureSession(ComponentActivity owner, Listener listener) {
         this.owner = owner;
         this.listener = listener;
+        rotation = new CaptureRotation(owner.getWindowManager().getDefaultDisplay().getRotation());
+        orientationListener = new OrientationEventListener(owner, SensorManager.SENSOR_DELAY_UI) {
+            @Override public void onOrientationChanged(int degrees) {
+                if (gate.isClosing() || !rotation.update(degrees)) return;
+                rotationGeneration++;
+                if (analysis != null) analysis.setTargetRotation(rotation.surfaceRotation());
+                Log.i("Pixel2DFace", "Camera orientation targetDegrees="
+                        + rotation.surfaceRotation() * 90);
+            }
+        };
     }
 
     boolean execute(Runnable action) {
@@ -103,6 +123,7 @@ final class CameraCaptureSession {
 
     private void bind(PreviewView previewView) {
         if (gate.isClosing() || owner.isFinishing() || owner.isDestroyed()) return;
+        orientationListener.enable();
         ListenableFuture<ProcessCameraProvider> future = ProcessCameraProvider.getInstance(owner);
         future.addListener(() -> {
             if (gate.isClosing() || owner.isFinishing() || owner.isDestroyed()) return;
@@ -110,6 +131,7 @@ final class CameraCaptureSession {
                 provider = future.get();
                 analysis = new ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .setTargetRotation(rotation.surfaceRotation())
                         .setTargetResolution(new Size(480, 360)).build();
                 analysis.setAnalyzer(analyzer, this::analyze);
                 if (previewView == null) {
@@ -136,16 +158,24 @@ final class CameraCaptureSession {
         if (!firstImageLogged) {
             firstImageLogged = true;
             Log.i("Pixel2DFace", "Camera first image startupMs=" + (startedAt - requestedAt)
-                    + " resolution=" + frame.getWidth() + "x" + frame.getHeight());
+                    + " resolution=" + frame.getWidth() + "x" + frame.getHeight()
+                    + " rotationDegrees=" + frame.getImageInfo().getRotationDegrees());
         }
         try {
             long capturedAt = timestamps.normalize(frame.getImageInfo().getTimestamp(), startedAt);
             int rotation = frame.getImageInfo().getRotationDegrees();
+            long frameRotationGeneration = rotationGeneration;
             if (frame.getImage() == null || capturedAt < 0) {
                 listener.onRejectedFrame("metadata");
                 complete(frame);
                 return;
             }
+            if (lastFrameRotation != -1 && (rotation != lastFrameRotation
+                    || frameRotationGeneration != lastFrameRotationGeneration)) {
+                listener.onRejectedFrame("rotation_changed");
+            }
+            lastFrameRotation = rotation;
+            lastFrameRotationGeneration = frameRotationGeneration;
             InputImage input = InputImage.fromMediaImage(frame.getImage(), rotation);
             SingleFaceDetector current;
             synchronized (detectorLock) { current = detector; }
@@ -157,7 +187,10 @@ final class CameraCaptureSession {
                     .addOnSuccessListener(analyzer, faces -> {
                         if (gate.isClosing()) return;
                         long evaluatedAt = SystemClock.elapsedRealtime();
-                        String rejected = evaluatedAt - startedAt > MAX_ANALYSIS_AGE_MS
+                        detectedFrames++;
+                        totalDetectionMs += evaluatedAt - startedAt;
+                        String rejected = frameRotationGeneration != rotationGeneration
+                                ? "rotation_changed" : evaluatedAt - startedAt > MAX_ANALYSIS_AGE_MS
                                 ? "analysis_age" : evaluatedAt < capturedAt ? "future_timestamp"
                                 : evaluatedAt - capturedAt > MAX_ANALYSIS_AGE_MS ? "frame_age" : null;
                         if (rejected != null) {
@@ -169,6 +202,8 @@ final class CameraCaptureSession {
                         } catch (RuntimeException failure) {
                             Log.w("Pixel2DFace", "Frame evaluation failed", failure);
                             listener.onRejectedFrame("evaluation_error");
+                        } finally {
+                            totalEvaluationMs += SystemClock.elapsedRealtime() - evaluatedAt;
                         }
                     })
                     .addOnFailureListener(analyzer, failure -> {
@@ -199,6 +234,7 @@ final class CameraCaptureSession {
     }
 
     private void unbind() {
+        orientationListener.disable();
         if (analysis != null) {
             analysis.clearAnalyzer();
             if (provider != null) provider.unbind(analysis);
@@ -219,6 +255,11 @@ final class CameraCaptureSession {
     }
 
     private void releaseDetector() {
+        if (detectedFrames > 0) {
+            Log.i("Pixel2DFace", "Camera analysis frames=" + detectedFrames
+                    + " detectionMeanMs=" + totalDetectionMs / detectedFrames
+                    + " evaluationMeanMs=" + totalEvaluationMs / detectedFrames);
+        }
         SingleFaceDetector released;
         synchronized (detectorLock) {
             released = detector;

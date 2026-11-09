@@ -4,6 +4,10 @@
 
 支持 Android 10–17（API 29–37），不限制设备品牌；设备需有前置摄像头、Root 和 LSPosed，并保留兼容的 SystemUI 接口。单 APK 包含 `armeabi-v7a`、`arm64-v8a`、`x86` 和 `x86_64`。
 
+## 0.13.4 正式发行版
+
+支持四向识别，人数与细节检测并行处理同一帧。250 项 JVM/Robolectric 检查、329 项真机回归通过。Pixel 4 XL / Android 17 完成方向、关屏与相机释放复测，用户确认可用；完整范围见 [验证记录](dist/PERFORMANCE-0.13.4-20261109.md)。
+
 ## 0.13.3 正式发行版
 
 优化模型加载与识别启动，Android 10–17 适配范围保持不变。241 项 JVM/Robolectric 检查、329 项真机断言、正式包与诊断包构建通过，Release Lint 无错误。

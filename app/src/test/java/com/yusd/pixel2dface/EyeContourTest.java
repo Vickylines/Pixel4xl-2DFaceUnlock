@@ -14,7 +14,7 @@ import org.robolectric.annotation.Config;
 @Config(sdk = 35)
 public final class EyeContourTest {
     @Test public void eyeOpeningDoesNotGrowWhenTheHeadTilts() {
-        for (int roll : new int[]{-25, -15, 0, 15, 25}) {
+        for (int roll : new int[]{-25, -15, 0, 15, 25, 90, 180, 270}) {
             float ratio = ratio(.04f, roll);
             assertEquals("roll=" + roll, .04f, ratio, .00001f);
             assertEquals(PassiveEyeGate.Problem.CONTOUR_UNRELIABLE,
@@ -23,7 +23,7 @@ public final class EyeContourTest {
     }
 
     @Test public void openEyesKeepTheSameMeasurementWhenRotatedOrMirrored() {
-        for (int roll : new int[]{-25, 0, 25}) {
+        for (int roll : new int[]{-25, 0, 25, 90, 180, 270}) {
             List<PointF> points = contour(.25f, roll);
             PointF first = transform(-30, 0, roll), second = transform(30, 0, roll);
             assertEquals(.25f, FaceFrameExtractor.eyeContourRatio(points, first, second), .00001f);

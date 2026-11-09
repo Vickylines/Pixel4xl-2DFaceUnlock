@@ -74,7 +74,7 @@ final class InferenceBenchmark {
             result.putLong(names[i] + "InferenceMedianUs", inference[i][20] / 1000);
         }
         // Native initialization must finish without producing identity evidence; a real
-        // frame still passes through the ordinary population-first detector afterward.
+        // frame still passes through the ordinary joined population/contour detector afterward.
         try (SingleFaceDetector detector = FaceDetectorFactory.create(Runnable::run, () -> false)) {
             long start = SystemClock.elapsedRealtime();
             if (!Tasks.await(detector.warmUp(), 10, TimeUnit.SECONDS).isEmpty())
