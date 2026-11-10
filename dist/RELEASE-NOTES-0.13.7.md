@@ -10,4 +10,6 @@
 
 已覆盖安装到 Pixel 4 XL / Android 17。安装前后人脸与设置文件 SHA-256 一致，SystemUI 重启后报告 versionCode 37，唤醒、认证、动画及相机宿主适配均可用。一轮亮灭屏检查后 SystemUI 进程稳定，设备处于息屏状态，没有活动相机客户端。本轮未完成真人识别与上滑复测。
 
-正式 APK：`Pixel2DFaceUnlock-universal-0.13.7.apk`，不可调试；校验值见 [SHA-256](SHA256SUMS-0.13.7.txt)。本次推送源码，GitHub Releases 下载仍保留 0.13.4。
+正式 APK：[Pixel2DFaceUnlock-universal-0.13.7.apk](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.7/Pixel2DFaceUnlock-universal-0.13.7.apk)，与本次覆盖安装到手机的文件一致，不可调试；校验值见 [SHA-256](SHA256SUMS-0.13.7.txt)。
+
+覆盖安装正式模块后，在 LSPosed 中启用“一瞥”，作用域只选择“系统界面”，再重启手机或 SystemUI。手机重启后的首次解锁先输入 PIN、图案或密码。锁屏实际运行版本应为 37；详细步骤见 [安装说明](INSTALL-ZH-0.13.7.txt)。
