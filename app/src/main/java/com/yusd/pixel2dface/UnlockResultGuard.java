@@ -35,7 +35,17 @@ final class UnlockResultGuard {
                 && isCurrent(candidate, now, currentGeneration);
     }
 
+    boolean isAwaitingResult(String candidate, long now, long currentGeneration) {
+        return !consumed && isCurrent(candidate, now, currentGeneration);
+    }
+
     boolean hasPendingDelivery() { return consumed && !delivered; }
+
+    /** Native writes can call back or stall after delivery was claimed. */
+    boolean isDeliveredAndCurrent(String candidate, long now, long currentGeneration, int currentUserId) {
+        return consumed && delivered && userId == currentUserId
+                && isCurrent(candidate, now, currentGeneration);
+    }
 
     boolean claimDelivery(String candidate, long now, long currentGeneration, int currentUserId) {
         if (!mayDeliver(candidate, now, currentGeneration, currentUserId)) {

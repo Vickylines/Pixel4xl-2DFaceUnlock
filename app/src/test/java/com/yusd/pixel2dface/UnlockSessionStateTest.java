@@ -263,4 +263,73 @@ public final class UnlockSessionStateTest {
         assertTrue(state.start("session", 120L, wake, 0));
         return state;
     }
+
+    @Test public void committedSwipeCannotStartHandoffUntilFaceAuthenticationExists() {
+        UnlockSessionState state = runningSession();
+        assertEquals(-1, state.beginBouncerHandoff(190));
+        state.configRevision = 42;
+        state.authenticate(0, 200);
+        long attempt = state.beginBouncerHandoff(201);
+        assertTrue(attempt > 0);
+        assertEquals(-1, state.beginBouncerHandoff(202));
+        assertTrue(state.claimBouncerHandoff(state.generation, attempt, 0, 42, 203));
+        assertFalse(state.claimBouncerHandoff(state.generation, attempt, 0, 42, 204));
+        state.cancelBouncerHandoff();
+        assertEquals(-1, state.beginBouncerHandoff(205));
+        assertEquals(200, state.authenticatedAt);
+    }
+
+    @Test public void cancelledSwipeCannotDeliverIntoItsReplacementGesture() {
+        UnlockSessionState state = runningSession();
+        state.configRevision = 42;
+        state.authenticate(0, 200);
+        long first = state.beginBouncerHandoff(201);
+        state.cancelBouncerHandoff();
+        assertFalse(state.isBouncerHandoffCurrent(state.generation, first, 202));
+        long second = state.beginBouncerHandoff(203);
+        assertTrue(second > first);
+        assertFalse(state.claimBouncerHandoff(state.generation, first, 0, 42, 204));
+        assertTrue(state.claimBouncerHandoff(state.generation, second, 0, 42, 205));
+    }
+
+    @Test public void handoffRechecksUserConfigurationAndAuthenticationExpiry() {
+        UnlockSessionState state = runningSession();
+        state.configRevision = 42;
+        state.authenticate(0, 200);
+        long attempt = state.beginBouncerHandoff(201);
+        assertFalse(state.claimBouncerHandoff(state.generation, attempt, 10, 42, 202));
+        assertFalse(state.claimBouncerHandoff(state.generation, attempt, 0, 43, 202));
+        assertFalse(state.claimBouncerHandoff(state.generation, attempt, 0, 42, 199));
+        assertFalse(state.claimBouncerHandoff(state.generation, attempt, 0, 42,
+                200 + UnlockSessionState.PASSIVE_AUTH_AGE_MS));
+        assertEquals(-1, state.beginBouncerHandoff(200 + UnlockSessionState.PASSIVE_AUTH_AGE_MS));
+    }
+
+    @Test public void sleepRevokesQueuedHandoffEvenWhenNewWakeUsesSameAttemptNumber() {
+        UnlockSessionState state = runningSession();
+        state.configRevision = 42;
+        state.authenticate(0, 200);
+        long generation = state.generation;
+        long oldAttempt = state.beginBouncerHandoff(201);
+        state.reset();
+        long next = state.wake(1000);
+        assertTrue(state.beginPreparation(next, 1010));
+        assertTrue(state.start("next", 1020, next, 0));
+        state.configRevision = 42;
+        state.authenticate(0, 1100);
+        long newAttempt = state.beginBouncerHandoff(1101);
+        assertEquals(oldAttempt, newAttempt);
+        assertFalse(state.claimBouncerHandoff(generation, oldAttempt, 0, 42, 1102));
+        assertTrue(state.claimBouncerHandoff(next, newAttempt, 0, 42, 1103));
+    }
+
+    @Test public void cameraHostExitDoesNotLoseHandoffForAnAlreadyAuthenticatedSwipe() {
+        UnlockSessionState state = runningSession();
+        state.configRevision = 42;
+        state.authenticate(0, 200);
+        state.finishHost("session");
+        long attempt = state.beginBouncerHandoff(201);
+        assertTrue(state.claimBouncerHandoff(state.generation, attempt, 0, 42, 202));
+        assertEquals(200, state.authenticatedAt);
+    }
 }

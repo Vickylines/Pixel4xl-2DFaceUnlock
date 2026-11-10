@@ -15,25 +15,24 @@ import de.robv.android.xposed.XposedHelpers;
 /** Optional visual adapters. No method in this class grants authentication. */
 final class SystemUiFeedback {
     private final Handler main;
-    private volatile WeakReference<Object> bouncerManager = new WeakReference<>(null);
     private volatile WeakReference<Object> entryIcon = new WeakReference<>(null);
     private volatile WeakReference<ViewGroup> root = new WeakReference<>(null);
     private UnlockFaceAnimationView animation;
     private int style = UnlockFaceAnimationView.STYLE_FACE_ID;
     private boolean scanningRequested;
+    private boolean lightRequested;
+    private long lightDeadline;
+    private final SystemUiScreenLight screenLight;
     private final View.OnLayoutChangeListener layoutListener =
             (v, l, t, r, b, ol, ot, or, ob) -> showWhenReady();
     private final View.OnAttachStateChangeListener attachListener = new View.OnAttachStateChangeListener() {
         @Override public void onViewAttachedToWindow(View view) { showWhenReady(); }
-        @Override public void onViewDetachedFromWindow(View view) { detachAnimation(); }
+        @Override public void onViewDetachedFromWindow(View view) { detachAnimation(); stopLight(); }
     };
 
     SystemUiFeedback(Handler main) {
         this.main = main;
-    }
-
-    void captureBouncer(Object manager) {
-        bouncerManager = new WeakReference<>(manager);
+        screenLight = new SystemUiScreenLight(main);
     }
 
     void captureEntryIcon(Object view) {
@@ -45,6 +44,7 @@ final class SystemUiFeedback {
             ViewGroup previous = root.get();
             if (previous == view) return;
             detachAnimation();
+            stopLight();
             if (previous != null) {
                 previous.removeOnLayoutChangeListener(layoutListener);
                 previous.removeOnAttachStateChangeListener(attachListener);
@@ -56,24 +56,22 @@ final class SystemUiFeedback {
         });
     }
 
-    boolean isBouncerShowing() {
-        Object manager = bouncerManager.get();
-        if (manager == null) {
-            return false;
-        }
-        try {
-            return Boolean.TRUE.equals(XposedHelpers.callMethod(manager, "isBouncerShowing"));
-        } catch (Throwable error) {
-            SystemUiLog.error("Credential-bouncer state unavailable; retaining swipe", error);
-            return false;
-        }
-    }
-
     void scanning(int requestedStyle) {
         onMain(() -> {
             detachAnimation();
+            lightRequested = false;
+            stopLight();
             style = AnimationStyle.normalize(requestedStyle);
             scanningRequested = true;
+            showWhenReady();
+        });
+    }
+
+    void lowLight() {
+        onMain(() -> {
+            if (!scanningRequested || lightRequested) return;
+            lightRequested = true;
+            lightDeadline = android.os.SystemClock.elapsedRealtime() + 12_000L;
             showWhenReady();
         });
     }
@@ -82,6 +80,14 @@ final class SystemUiFeedback {
         ViewGroup container = root.get();
         if (container == null || !container.isAttachedToWindow() || container.getWidth() == 0) return;
         try {
+            if (scanningRequested && lightRequested) {
+                if (android.os.SystemClock.elapsedRealtime() < lightDeadline) {
+                    screenLight.show(container, lightDeadline);
+                } else {
+                    lightRequested = false;
+                    stopLight();
+                }
+            }
             if (animation == null && scanningRequested) {
                 UnlockFaceAnimationView view = new UnlockFaceAnimationView(container.getContext(), style);
                 view.bindAnimationHost(container);
@@ -112,6 +118,8 @@ final class SystemUiFeedback {
     void success() {
         onMain(() -> {
             scanningRequested = false;
+            lightRequested = false;
+            stopLight();
             UnlockFaceAnimationView shown = animation;
             if (shown != null) {
                 shown.showSuccess();
@@ -123,6 +131,8 @@ final class SystemUiFeedback {
     void failure() {
         onMain(() -> {
             scanningRequested = false;
+            lightRequested = false;
+            stopLight();
             UnlockFaceAnimationView shown = animation;
             if (shown != null) {
                 shown.showFailure("请使用密码");
@@ -135,8 +145,14 @@ final class SystemUiFeedback {
     void remove() {
         onMain(() -> {
             scanningRequested = false;
+            lightRequested = false;
+            stopLight();
             detachAnimation();
         });
+    }
+
+    private void stopLight() {
+        screenLight.remove();
     }
 
     private void dismissIfCurrent(UnlockFaceAnimationView expected) {

@@ -37,7 +37,7 @@ def main():
 
     def call(*parts, data=None):
         return subprocess.run(adb + list(parts), input=data, stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, check=True).stdout
+                              stderr=subprocess.PIPE, check=True, timeout=120).stdout
 
     def root_shell(command, data=None):
         return call("shell", "-T", "su", "-c", command, data=data)
@@ -72,12 +72,17 @@ def main():
             raise RuntimeError("Transactional restore did not report success; inspect current state")
         print("Original v3 identity restored. Existing preferences retained; old sessions revoked.")
     finally:
-        if installed:
-            call("uninstall", "com.yusd.pixel2dface.test")
-        if created:
-            # Exact tool-owned staging paths only; never replace or remove the store lock.
-            root_shell("rm -f " + stage + "/face2d.properties")
-            root_shell("rmdir " + stage + " 2>/dev/null || true")
+        try:
+            if installed:
+                call("uninstall", "com.yusd.pixel2dface.test")
+        finally:
+            if created:
+                # Each cleanup is attempted even if an earlier device command fails.
+                # Exact tool-owned paths only; never replace or remove the store lock.
+                try:
+                    root_shell("rm -f " + stage + "/face2d.properties")
+                finally:
+                    root_shell("rmdir " + stage + " 2>/dev/null || true")
 
 
 if __name__ == "__main__":

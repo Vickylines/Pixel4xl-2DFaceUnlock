@@ -96,7 +96,10 @@ public final class XposedEntry implements IXposedHookLoadPackage {
                 "com.android.systemui.statusbar.phone.StatusBarKeyguardViewManager");
         if (type != null) {
             XposedBridge.hookAllConstructors(type, after(param ->
-                    sessions.feedback.captureBouncer(param.thisObject)));
+                    sessions.bouncer.capture(param.thisObject)));
+            // Includes fully-shown and cancelled native swipe transitions. No touch
+            // injection, gesture interception, or dismissal before authentication.
+            hook(type, "updateStates", after(param -> sessions.bouncerStateChanged()));
         }
     }
 

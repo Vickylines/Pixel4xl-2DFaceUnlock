@@ -6,6 +6,8 @@
 
 > **[0.13.4 稳定版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.13.4)**：支持横屏与倒置识别，人数和细节检测并行处理同一帧，缩短检测等待。身份、睁眼、连续确认及系统授权要求保持原值，详见 [发布说明](dist/RELEASE-NOTES-0.13.4.md)。
 
+当前源码版本为 **0.13.7**，包含躺卧方向恢复、暗光补光、上滑交接，以及认证写入期间的过期与撤销修复，详见 [构建记录](dist/RELEASE-NOTES-0.13.7.md)。
+
 一瞥是 Pixel4xl 2D Face Unlock 的新名字。0.13.4 通用构建支持 Android 10–17，面向已 Root、已安装 LSPosed 且保留兼容 SystemUI 接口的设备；同一 APK 包含 ARM32、ARM64、x86 和 x86_64。锁屏接口按运行时能力选择，不再限制 Google Pixel 品牌。
 
 识别使用离线 MobileFaceNet 与 v4 模板，已有 v3 模板继续使用纹理与几何双信号后端。相机、识别、存储与 SystemUI 会话分开管理；识别与一次性授权、系统弱认证策略及锁屏退出分别复核。适配范围见 [兼容性矩阵](COMPATIBILITY.md)。

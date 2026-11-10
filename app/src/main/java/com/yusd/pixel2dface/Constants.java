@@ -13,6 +13,7 @@ public final class Constants {
     public static final String ACTION_CAMERA_HOST_READY =
             PACKAGE_NAME + ".ACTION_CAMERA_HOST_READY";
     public static final String ACTION_CANCEL_CAPTURE = PACKAGE_NAME + ".ACTION_CANCEL_CAPTURE";
+    public static final String ACTION_LOW_LIGHT = PACKAGE_NAME + ".ACTION_LOW_LIGHT";
 
     public static final String EXTRA_MODE = "mode";
     public static final String EXTRA_SESSION_TOKEN = "session_token";

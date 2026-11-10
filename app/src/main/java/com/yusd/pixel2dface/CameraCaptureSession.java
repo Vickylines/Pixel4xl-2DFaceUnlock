@@ -10,6 +10,8 @@ import android.view.OrientationEventListener;
 
 import androidx.activity.ComponentActivity;
 import androidx.camera.core.CameraSelector;
+import androidx.camera.core.Camera;
+import androidx.camera.core.ExposureState;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
@@ -32,6 +34,7 @@ final class CameraCaptureSession {
         void onFrame(ImageProxy image, int rotation, List<Face> faces, long capturedAtMs);
         void onRejectedFrame(String reason);
         void onCameraError(String message);
+        default void onLowLight() { }
         default void onClosed() { }
     }
 
@@ -42,6 +45,8 @@ final class CameraCaptureSession {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final CaptureSessionGate gate = new CaptureSessionGate();
     private final FrameTimestampNormalizer timestamps = new FrameTimestampNormalizer();
+    private final DetectionOrientation detectionOrientation = new DetectionOrientation();
+    private final CaptureLighting lighting = new CaptureLighting();
     private final CaptureRotation rotation;
     private final OrientationEventListener orientationListener;
     private volatile long rotationGeneration;
@@ -51,6 +56,7 @@ final class CameraCaptureSession {
     private SingleFaceDetector detector;
     // CameraX binding and unbinding are confined to the main thread.
     private ProcessCameraProvider provider;
+    private Camera camera;
     private ImageAnalysis analysis;
     private Preview preview;
     private long requestedAt;
@@ -135,11 +141,11 @@ final class CameraCaptureSession {
                         .setTargetResolution(new Size(480, 360)).build();
                 analysis.setAnalyzer(analyzer, this::analyze);
                 if (previewView == null) {
-                    provider.bindToLifecycle(owner, CameraSelector.DEFAULT_FRONT_CAMERA, analysis);
+                    camera = provider.bindToLifecycle(owner, CameraSelector.DEFAULT_FRONT_CAMERA, analysis);
                 } else {
                     preview = new Preview.Builder().build();
                     preview.setSurfaceProvider(previewView.getSurfaceProvider());
-                    provider.bindToLifecycle(owner, CameraSelector.DEFAULT_FRONT_CAMERA,
+                    camera = provider.bindToLifecycle(owner, CameraSelector.DEFAULT_FRONT_CAMERA,
                             analysis, preview);
                 }
             } catch (Exception failure) {
@@ -163,12 +169,18 @@ final class CameraCaptureSession {
         }
         try {
             long capturedAt = timestamps.normalize(frame.getImageInfo().getTimestamp(), startedAt);
-            int rotation = frame.getImageInfo().getRotationDegrees();
+            int rotation = detectionOrientation.rotationFor(frame.getImageInfo().getRotationDegrees());
             long frameRotationGeneration = rotationGeneration;
             if (frame.getImage() == null || capturedAt < 0) {
                 listener.onRejectedFrame("metadata");
                 complete(frame);
                 return;
+            }
+            ImageProxy.PlaneProxy luma = frame.getPlanes()[0];
+            if (startedAt - capturedAt <= MAX_ANALYSIS_AGE_MS && lighting.needsLight(
+                    luma.getBuffer(), frame.getWidth(), frame.getHeight(), luma.getRowStride(),
+                    luma.getPixelStride(), capturedAt)) {
+                main.post(this::assistLowLight);
             }
             if (lastFrameRotation != -1 && (rotation != lastFrameRotation
                     || frameRotationGeneration != lastFrameRotationGeneration)) {
@@ -196,6 +208,11 @@ final class CameraCaptureSession {
                         if (rejected != null) {
                             listener.onRejectedFrame(rejected);
                             return;
+                        }
+                        detectionOrientation.observe(faces.size(), faces.size() == 1
+                                ? faces.get(0).getHeadEulerAngleZ() : 0f);
+                        if (faces.size() == 1 && rotation != frame.getImageInfo().getRotationDegrees()) {
+                            Log.d("Pixel2DFace", "Face-oriented analysis rotationDegrees=" + rotation);
                         }
                         try {
                             listener.onFrame(frame, rotation, faces, capturedAt);
@@ -225,6 +242,23 @@ final class CameraCaptureSession {
         }
     }
 
+    private void assistLowLight() {
+        if (gate.isClosing() || camera == null) return;
+        listener.onLowLight();
+        ExposureState exposure = camera.getCameraInfo().getExposureState();
+        if (!exposure.isExposureCompensationSupported()) return;
+        int target = Math.min(exposure.getExposureCompensationRange().getUpper(),
+                Math.round(.67f / exposure.getExposureCompensationStep().floatValue()));
+        ListenableFuture<Integer> applied = camera.getCameraControl().setExposureCompensationIndex(target);
+        applied.addListener(() -> {
+            try {
+                Log.i("Pixel2DFace", "Low-light exposure applied index=" + applied.get());
+            } catch (Exception failure) {
+                if (!gate.isClosing()) Log.w("Pixel2DFace", "Low-light exposure unavailable", failure);
+            }
+        }, owner.getMainExecutor());
+    }
+
     /** Idempotent. The detector stays alive until its outstanding task closes its frame. */
     void close() {
         gate.requestClose();
@@ -235,6 +269,7 @@ final class CameraCaptureSession {
 
     private void unbind() {
         orientationListener.disable();
+        camera = null;
         if (analysis != null) {
             analysis.clearAnalyzer();
             if (provider != null) provider.unbind(analysis);

@@ -51,6 +51,25 @@ public final class UnlockResultGuardTest {
         assertFalse(gate.mayDeliver("session-a", 204L, 1L, 10));
     }
 
+    @Test public void completedNativeWriteStillRequiresTheOriginalFreshTicket() {
+        UnlockResultGuard gate = new UnlockResultGuard();
+        gate.start("session-a", 100L, 1L, 10);
+        assertFalse(gate.isDeliveredAndCurrent("session-a", 101L, 1L, 10));
+        assertTrue(gate.consume("session-a", 102L, 1L));
+        assertFalse(gate.isDeliveredAndCurrent("session-a", 103L, 1L, 10));
+        assertTrue(gate.claimDelivery("session-a", 104L, 1L, 10));
+        assertTrue(gate.isDeliveredAndCurrent("session-a", 105L, 1L, 10));
+        assertFalse(gate.isDeliveredAndCurrent("other", 105L, 1L, 10));
+        assertFalse(gate.isDeliveredAndCurrent("session-a", 105L, 2L, 10));
+        assertFalse(gate.isDeliveredAndCurrent("session-a", 105L, 1L, 0));
+        assertTrue(gate.isDeliveredAndCurrent("session-a",
+                100L + UnlockResultGuard.MAX_RESULT_AGE_MS, 1L, 10));
+        assertFalse(gate.isDeliveredAndCurrent("session-a",
+                101L + UnlockResultGuard.MAX_RESULT_AGE_MS, 1L, 10));
+        gate.clear();
+        assertFalse(gate.isDeliveredAndCurrent("session-a", 106L, 1L, 10));
+    }
+
     @Test public void invalidNewSessionCannotKeepAnOldCapabilityAlive() {
         UnlockResultGuard gate = new UnlockResultGuard();
         gate.start("session-a", 100L, 1L, 0);

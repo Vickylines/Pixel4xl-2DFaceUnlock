@@ -20,6 +20,9 @@ final class UnlockSessionState {
     boolean cameraHostActive;
     boolean hostReadyHandled;
     boolean readinessPending;
+    private long bouncerAttempt;
+    private boolean bouncerPending;
+    private boolean bouncerDelivered;
 
     long wake(long now) {
         if (now < 0L) {
@@ -153,6 +156,30 @@ final class UnlockSessionState {
         authenticatedAt = now;
     }
 
+    long beginBouncerHandoff(long now) {
+        if (!hasPassiveAuthentication(now) || bouncerPending || bouncerDelivered) return -1;
+        bouncerPending = true;
+        return ++bouncerAttempt;
+    }
+
+    void cancelBouncerHandoff() {
+        bouncerPending = false;
+    }
+
+    boolean isBouncerHandoffCurrent(long expectedGeneration, long attempt, long now) {
+        return generation == expectedGeneration && bouncerPending && bouncerAttempt == attempt
+                && hasPassiveAuthentication(now);
+    }
+
+    boolean claimBouncerHandoff(long expectedGeneration, long attempt, int user,
+            long revision, long now) {
+        if (!isBouncerHandoffCurrent(expectedGeneration, attempt, now)
+                || user != authenticatedUser || !configurationMatches(revision)) return false;
+        bouncerPending = false;
+        bouncerDelivered = true;
+        return true;
+    }
+
     void finishHost(String candidate) {
         if (matches(candidate)) {
             cameraHostActive = false;
@@ -195,5 +222,8 @@ final class UnlockSessionState {
         readinessPending = false;
         authenticatedAt = -1L;
         authenticatedUser = -1;
+        bouncerAttempt = 0;
+        bouncerPending = false;
+        bouncerDelivered = false;
     }
 }

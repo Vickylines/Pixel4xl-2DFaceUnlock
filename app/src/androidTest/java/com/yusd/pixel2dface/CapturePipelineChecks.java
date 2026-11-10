@@ -57,6 +57,38 @@ final class CapturePipelineChecks {
             Face upright = await(joined.process(image)).get(0);
             require(upright.getAllContours().size() > 0, "native contour results");
             require(upright.getAllLandmarks().size() > 0, "native landmark results");
+            int independentDirections = 0, maximumSearchFrames = 0;
+            for (int correction : new int[]{0, 90, 180, 270}) {
+                Matrix rotate = new Matrix(); rotate.postRotate((360 - correction) % 360);
+                Bitmap raw = Bitmap.createBitmap(portrait, 0, 0, portrait.getWidth(),
+                        portrait.getHeight(), rotate, false);
+                for (int gravity : new int[]{0, 90, 180, 270}) {
+                    DetectionOrientation direction = new DetectionOrientation();
+                    boolean found = false;
+                    for (int frame = 1; frame <= 4; frame++) {
+                        int selected = direction.rotationFor(gravity);
+                        List<Face> faces = await(joined.process(InputImage.fromBitmap(raw, selected)));
+                        direction.observe(faces.size(), faces.size() == 1 ? faces.get(0).getHeadEulerAngleZ() : 0);
+                        if (faces.size() == 1 && Math.abs(faces.get(0).getHeadEulerAngleZ()) <= 25) {
+                            require(selected == correction, "face direction independent of gravity "
+                                    + correction + "/" + gravity + " selected " + selected);
+                            sameFace(upright, faces.get(0), true);
+                            maximumSearchFrames = Math.max(maximumSearchFrames, frame);
+                            found = true;
+                            for (int stable = 0; stable < 5; stable++) {
+                                require(direction.rotationFor(gravity) == correction, "stable capture direction");
+                                direction.observe(1, faces.get(0).getHeadEulerAngleZ());
+                            }
+                            break;
+                        }
+                    }
+                    require(found, "bedtime direction found " + correction + "/" + gravity);
+                    independentDirections++;
+                }
+                if (raw != portrait) raw.recycle();
+            }
+            result.putInt("faceGravityCombinationsPassed", independentDirections);
+            result.putInt("maximumDirectionSearchFrames", maximumSearchFrames);
             int orientations = 0;
             float maximumContourDelta = 0;
             for (int correction : new int[]{0, 90, 180, 270}) {

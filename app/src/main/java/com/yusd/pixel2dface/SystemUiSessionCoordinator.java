@@ -33,6 +33,7 @@ final class SystemUiSessionCoordinator {
     private final UnlockSessionState session = new UnlockSessionState();
     private final Handler main;
     final SystemUiFeedback feedback;
+    final SystemUiBouncer bouncer = new SystemUiBouncer();
     private final ExecutorService ipc = Executors.newSingleThreadExecutor(task -> {
         Thread thread = new Thread(task, "Pixel2DFace-systemui-ipc");
         thread.setDaemon(true);
@@ -382,6 +383,80 @@ final class SystemUiSessionCoordinator {
         });
     }
 
+    /** Reconciles success with a swipe that commits after the initial result was delivered. */
+    void bouncerStateChanged() {
+        onMain(() -> {
+            synchronized (lock) {
+                if (!session.hasPassiveAuthentication(SystemClock.elapsedRealtime())) return;
+            }
+            if (!bouncer.isShowing()) {
+                synchronized (lock) { session.cancelBouncerHandoff(); }
+                return;
+            }
+            Context attached = getContext();
+            Object currentMonitor = getMonitor();
+            Object currentBouncer = bouncer.current();
+            if (attached == null || currentMonitor == null) return;
+            long generation, revision, attempt;
+            int user;
+            synchronized (lock) {
+                attempt = session.beginBouncerHandoff(SystemClock.elapsedRealtime());
+                if (attempt < 0) return;
+                generation = session.generation;
+                revision = session.configRevision;
+                user = session.authenticatedUser;
+            }
+            trace("bouncer_handoff_requested", generation, "committed swipe after passive success");
+            ipc.execute(() -> {
+                Bundle current = readState(attached);
+                main.post(() -> {
+                    synchronized (lock) {
+                        if (!session.isBouncerHandoffCurrent(generation, attempt,
+                                SystemClock.elapsedRealtime())) return;
+                    }
+                    if (!isEnabled(current) || current.getLong("revision", -1L) != revision
+                            || user != SystemUiCompat.resolveSelectedUserId(currentMonitor)
+                            || !SystemUiCompat.isWeakBiometricAllowed(currentMonitor, user)) {
+                        invalidate(currentMonitor, "bouncer handoff configuration/user/policy revoked");
+                        return;
+                    }
+                    PowerManager power = attached.getSystemService(PowerManager.class);
+                    KeyguardManager keyguard = attached.getSystemService(KeyguardManager.class);
+                    if (power == null || !power.isInteractive()) {
+                        invalidate(currentMonitor, "bouncer handoff after screen-off");
+                        return;
+                    }
+                    if (keyguard == null || !keyguard.isKeyguardLocked()
+                            || bouncer.current() != currentBouncer || !bouncer.isShowing()) {
+                        synchronized (lock) { session.cancelBouncerHandoff(); }
+                        trace("bouncer_handoff_cancelled", generation, "bouncer no longer showing");
+                        return;
+                    }
+                    // A native cache clear may have crossed the swipe. Restore only the
+                    // still-valid passive grant after re-reading configuration and policy.
+                    if (!SystemUiCompat.canSkipBouncer(currentMonitor, user)
+                            && !SystemUiCompat.storeWeakAuthentication(currentMonitor, user)) {
+                        invalidate(currentMonitor, "bouncer handoff weak cache unavailable");
+                        return;
+                    }
+                    synchronized (lock) {
+                        if (!session.claimBouncerHandoff(generation, attempt, user, revision,
+                                SystemClock.elapsedRealtime())) {
+                            SystemUiCompat.clearStoredWeakAuthentication(currentMonitor, user);
+                            return;
+                        }
+                    }
+                    if (bouncer.completeWeakAuthentication(currentBouncer)) {
+                        feedback.remove();
+                        trace("bouncer_handoff_dispatched", generation, "native weak completion requested");
+                    } else {
+                        trace("bouncer_handoff_unavailable", generation, "retaining native swipe state");
+                    }
+                });
+            });
+        });
+    }
+
     void restorePassiveAuthentication(Object currentMonitor) {
         onMain(() -> {
             int expectedUser;
@@ -432,6 +507,7 @@ final class SystemUiSessionCoordinator {
                     if (SystemUiCompat.canSkipBouncer(currentMonitor, expectedUser)) {
                         trace("passive_restore_existing_native", generation,
                                 "native authentication already permits swipe");
+                        bouncerStateChanged();
                         return;
                     }
                     if (!SystemUiCompat.storeWeakAuthentication(currentMonitor, expectedUser)) {
@@ -452,6 +528,7 @@ final class SystemUiSessionCoordinator {
                     }
                     trace("passive_restore_completed", generation,
                             "adapter=" + SystemUiCompat.getAuthenticationAdapterLabel());
+                    bouncerStateChanged();
                 });
             });
         });
@@ -467,6 +544,7 @@ final class SystemUiSessionCoordinator {
             return;
         }
         if (!Constants.ACTION_UNLOCK_RESULT.equals(action)
+                && !Constants.ACTION_LOW_LIGHT.equals(action)
                 && !Constants.ACTION_CAMERA_HOST_READY.equals(action)
                 && !Constants.ACTION_CAMERA_HOST_FINISHED.equals(action)) {
             return;
@@ -475,6 +553,15 @@ final class SystemUiSessionCoordinator {
         try {
             token = intent.getStringExtra(Constants.EXTRA_SESSION_TOKEN);
         } catch (RuntimeException malformed) {
+            return;
+        }
+        if (Constants.ACTION_LOW_LIGHT.equals(action)) {
+            synchronized (lock) {
+                if (!session.matches(token) || !session.isHostActive(SystemClock.elapsedRealtime())
+                        || !session.results.isAwaitingResult(token, SystemClock.elapsedRealtime(),
+                                session.generation)) return;
+            }
+            if (isLockedAndInteractive(getContext())) feedback.lowLight();
             return;
         }
         if (Constants.ACTION_CAMERA_HOST_READY.equals(action)) {
@@ -585,7 +672,7 @@ final class SystemUiSessionCoordinator {
             }
         }
         try {
-            if (feedback.isBouncerShowing()) {
+            if (bouncer.isShowing()) {
                 trace("delivery_bouncer", generation, "using weak native face callback");
                 feedback.remove();
                 if (!SystemUiCompat.dispatchFaceAuthenticated(currentMonitor, user)) {
@@ -605,19 +692,24 @@ final class SystemUiSessionCoordinator {
                 endFailedSession(token, generation, "passive adapter rejected");
                 return;
             }
+            synchronized (lock) {
+                long completedAt = SystemClock.elapsedRealtime();
+                // Reflection/native callbacks can both revoke and outlive the result ticket.
+                // A claimed delivery must not turn an expired insertion into a fresh 60s grant.
+                if (session.generation != generation || !session.results.isDeliveredAndCurrent(
+                        token, completedAt, generation, user)) {
+                    SystemUiCompat.clearStoredWeakAuthentication(currentMonitor, user);
+                    trace("delivery_revoked", generation, "revoked or expired during adapter write");
+                    return;
+                }
+                session.authenticate(user, completedAt);
+            }
             trace("delivery_completed", generation, "passive adapter="
                     + SystemUiCompat.getAuthenticationAdapterLabel() + ", nativeCanSkip="
                     + SystemUiCompat.canSkipBouncer(currentMonitor, user));
-            synchronized (lock) {
-                // A hook on a different thread may have invalidated this wake during reflection.
-                if (session.generation != generation) {
-                    SystemUiCompat.clearStoredWeakAuthentication(currentMonitor, user);
-                    return;
-                }
-                session.authenticate(user, SystemClock.elapsedRealtime());
-            }
             feedback.unlockedIcon(true);
             feedback.success();
+            bouncerStateChanged();
             refreshTimeout(attached);
             heartbeat();
             main.postDelayed(() -> {
@@ -648,6 +740,7 @@ final class SystemUiSessionCoordinator {
             IntentFilter filter = new IntentFilter(Constants.ACTION_UNLOCK_RESULT);
             filter.addAction(Constants.ACTION_CAMERA_HOST_READY);
             filter.addAction(Constants.ACTION_CAMERA_HOST_FINISHED);
+            filter.addAction(Constants.ACTION_LOW_LIGHT);
             filter.addAction(Constants.ACTION_CONFIGURATION_CHANGED);
             if (register(attached, receiver, filter, Constants.PERMISSION_SEND_SIGNALS)) {
                 resultReceiver = receiver;

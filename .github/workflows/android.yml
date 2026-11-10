@@ -25,6 +25,9 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Check recovery-tool cleanup
+        run: python3 -B -m unittest discover -s tools -p test_restore_legacy_enrollment.py -v
+
       - name: Build and lint
         run: ./gradlew :app:testDebugUnitTest :app:assembleRelease :app:lintRelease :app:assembleDebugAndroidTest --no-daemon
 

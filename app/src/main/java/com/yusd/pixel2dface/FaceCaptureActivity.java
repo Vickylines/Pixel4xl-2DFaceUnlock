@@ -159,6 +159,11 @@ public class FaceCaptureActivity extends ComponentActivity {
             }
             @Override public void onClosed() { extractor.close(); }
             @Override public void onCameraError(String message) { finishFailure(false, message); }
+            @Override public void onLowLight() {
+                if (isUnlock() && !finished.get()) sendBroadcast(new Intent(Constants.ACTION_LOW_LIGHT)
+                        .setPackage(Constants.SYSTEM_UI_PACKAGE)
+                        .putExtra(Constants.EXTRA_SESSION_TOKEN, sessionToken));
+            }
         });
         // Include initialization in the deadline so a stalled provider cannot leave a host alive.
         main.postDelayed(() -> finishFailure(isUnlock(), "识别超时，请重试"),
