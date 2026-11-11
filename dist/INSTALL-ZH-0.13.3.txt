@@ -1,9 +1,9 @@
-一瞥 0.13.3
+2D人脸解锁 0.13.3
 
 正式模块：Pixel2DFaceUnlock-universal-0.13.3.apk
 独立诊断包：Pixel2DFaceUnlock-0.13.3-validation.apk
 
-覆盖安装正式模块，保留原有面容和设置。在 LSPosed 中启用“一瞥”，作用域只选择“系统界面”，然后重启手机或 SystemUI。重启后的首次解锁先输入原有 PIN、图案或密码。
+覆盖安装正式模块，保留原有面容和设置。在 LSPosed 中启用模块 com.yusd.pixel2dface，作用域只选择“系统界面”，然后重启手机或 SystemUI。重启后的首次解锁先输入原有 PIN、图案或密码。
 
 更新后锁屏实际运行版本应为 33；可在“连接与关于”中查看。诊断包不在 LSPosed 中启用。
 

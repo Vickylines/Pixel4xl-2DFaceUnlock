@@ -31,7 +31,7 @@ final class MotionArtworkReview {
                     (seconds - (state == 1 ? 2.4f : 4.8f)) / (state == 1 ? .52f : .42f));
             canvas.drawColor(0xff10141f);
             label.setTextSize(32); label.setColor(0xffefbb66);
-            canvas.drawText("一瞥",40,51,label);
+            canvas.drawText(context.getString(R.string.app_name),40,51,label);
             label.setTextSize(23); label.setColor(0xffdfe5ee);
             canvas.drawText(state == 0 ? "识别中" : state == 1 ? "成功" : "失败",925,49,label);
             for (int i = 0; i < renderers.length; i++) {

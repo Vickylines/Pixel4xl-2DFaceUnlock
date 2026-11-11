@@ -1,4 +1,4 @@
-# 一瞥
+# 2D人脸解锁
 
 [![Android CI](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/actions/workflows/android.yml/badge.svg)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/actions/workflows/android.yml)
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel4xl-2DFaceUnlock)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
@@ -6,7 +6,7 @@
 
 > **[0.13.8 正式版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.13.8)**：减少重复推理和亮屏等待。Pixel 4 XL 同机前后各测 8 轮，亮屏到认证完成的中位数缩短 17.7%，详见 [更新说明](dist/RELEASE-NOTES-0.13.8.md)。
 
-一瞥是 Pixel4xl 2D Face Unlock 的新名字。0.13.8 通用构建支持 Android 10–17，面向已 Root、已安装 LSPosed 且保留兼容 SystemUI 接口的设备；同一 APK 包含 ARM32、ARM64、x86 和 x86_64。锁屏接口按运行时能力选择，不再限制 Google Pixel 品牌。
+0.13.8 通用构建支持 Android 10–17，面向已 Root、已安装 LSPosed 且保留兼容 SystemUI 接口的设备；同一 APK 包含 ARM32、ARM64、x86 和 x86_64。锁屏接口按运行时能力选择，不再限制 Google Pixel 品牌。
 
 识别使用离线 MobileFaceNet 与 v4 模板，已有 v3 模板继续使用纹理与几何双信号后端。相机、识别、存储与 SystemUI 会话分开管理；识别与一次性授权、系统弱认证策略及锁屏退出分别复核。适配范围见 [兼容性矩阵](COMPATIBILITY.md)。
 
@@ -68,7 +68,7 @@
 1. 覆盖安装 APK，不要卸载旧版；相同包名升级会保留设置和旧模板文件。
 2. 在 LSPosed 中启用本模块，作用域只选择“系统界面”。
 3. 重启手机或重启 SystemUI；重启后的第一次解锁先输入 PIN。
-4. 打开“一瞥”，检查首页连接状态；若显示“重启以完成更新”，重启后再查看右上角“连接与关于”。
+4. 打开应用，检查首页连接状态；若显示“重启以完成更新”，重启后再查看右上角“连接与关于”。
 5. 已有有效 v3/v4 模板无需重新录入；没有有效模板时，按提示重新录入一次以建立 v4 模板。自然看向屏幕即可，不要求眨眼或转头。
 
 当前版本保留已有 v3/v4 模板；新录入建立 MobileFaceNet v4 模板。验证版拥有独立数据，不能替代正式模块，也不会把录入自动同步到正式模块。升级验证包后它不再作为 LSPosed 模块显示；请确认启用的是正式包 `com.yusd.pixel2dface`，作用域只选系统界面。

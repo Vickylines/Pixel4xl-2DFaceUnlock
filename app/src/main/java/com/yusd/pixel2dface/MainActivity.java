@@ -127,7 +127,7 @@ public final class MainActivity extends ComponentActivity {
         hero.setPadding(dp(24), dp(30), dp(24), dp(24));
         hero.setBackground(Ui.rounded(this, R.color.accent_surface, 30));
         ImageView face = new ImageView(this);
-        face.setImageResource(R.drawable.ic_yipie);
+        face.setImageResource(R.drawable.ic_face_unlock);
         face.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         hero.addView(face, new LinearLayout.LayoutParams(dp(60), dp(60)));
         statusView = Ui.heading(this, "正在读取设置", 25);
