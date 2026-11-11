@@ -18,7 +18,7 @@ import org.tensorflow.lite.Interpreter;
 /** On-device comparison against the 0.13.2 loader, using synthetic pixels and no enrollment. */
 final class InferenceBenchmark {
     static void run(Context context, Bundle result) throws Exception {
-        ByteBuffer input = ByteBuffer.allocateDirect(2 * 112 * 112 * 3 * Float.BYTES)
+        ByteBuffer input = ByteBuffer.allocateDirect(112 * 112 * 3 * Float.BYTES)
                 .order(ByteOrder.nativeOrder());
         float[][] output = new float[2][EmbeddingIdentity.DIMENSIONS];
         long[][] init = new long[2][10];
@@ -110,11 +110,9 @@ final class InferenceBenchmark {
 
     private static void fill(ByteBuffer input, int pattern) {
         input.clear();
-        for (int batch = 0; batch < 2; batch++) {
-            for (int y = 0; y < 112; y++) for (int x = 0; x < 112; x++) {
-                for (int c = 0; c < 3; c++) input.putFloat(pattern == 0 ? 0f
-                        : (((x * (13 + pattern) + y * 7 + c * 41 + pattern) % 256) - 127.5f) / 128f);
-            }
+        for (int y = 0; y < 112; y++) for (int x = 0; x < 112; x++) {
+            for (int c = 0; c < 3; c++) input.putFloat(pattern == 0 ? 0f
+                    : (((x * (13 + pattern) + y * 7 + c * 41 + pattern) % 256) - 127.5f) / 128f);
         }
         input.flip();
     }

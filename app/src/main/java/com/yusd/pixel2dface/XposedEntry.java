@@ -54,7 +54,7 @@ public final class XposedEntry implements IXposedHookLoadPackage {
                 }
             }));
             sessions.wakeMethodInstalled = hook(monitor, "handleStartedWakingUp",
-                    after(param -> sessions.wake(param.thisObject, 80L)));
+                    after(param -> sessions.wake(param.thisObject)));
             hook(monitor, "setKeyguardShowing", before(param -> {
                 if (firstBooleanIsFalse(param)) {
                     sessions.hidden();
@@ -197,7 +197,7 @@ public final class XposedEntry implements IXposedHookLoadPackage {
                 try {
                     Message message = (Message) param.args[0];
                     if (message != null && message.what == 319) {
-                        sessions.wake(XposedHelpers.getSurroundingThis(param.thisObject), 80L);
+                        sessions.wake(XposedHelpers.getSurroundingThis(param.thisObject));
                     }
                 } catch (Throwable error) {
                     SystemUiLog.error("Coral inline wake adapter failed", error);

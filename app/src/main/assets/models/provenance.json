@@ -3,14 +3,33 @@
   "sourceRepository": "https://github.com/syaringan357/Android-MobileFaceNet-MTCNN-FaceAntiSpoofing",
   "sourceCommit": "d635649e711f5e16e6cd3dc06cbb329cd8d1d3b7",
   "sourcePath": "app/src/main/assets/MobileFaceNet.tflite",
-  "sha256": "d8ba40c0127fb8ca9917e8fddc79bbbda063657bc92a496d34da0bc8a760443b",
-  "bytes": 5233396,
+  "sha256": "e96cbe3fa7db64a45d9c63a83d216a9b70cac4aeac6e2fed47ff6684c53517ec",
+  "bytes": 5231976,
   "repositoryLicense": "MIT; bundled at assets/licenses/MobileFaceNet-MIT.txt",
   "upstreamTrainingImplementation": "https://github.com/sirius-ai/MobileFaceNet_TF",
   "modelId": "mobilefacenet-d635649-rgb112-fivepoint-v1",
-  "input": {"shape": [2, 112, 112, 3], "type": "float32", "channels": "RGB", "normalization": "(channel - 127.5) / 128"},
-  "output": {"shape": [2, 192], "type": "float32", "postprocessing": "L2 normalization"},
-  "batchPolicy": "Two copies of the same aligned face; only the first embedding is used. Fixed internal graph reshapes prohibit batch=1.",
+  "input": {
+    "shape": [
+      1,
+      112,
+      112,
+      3
+    ],
+    "type": "float32",
+    "channels": "RGB",
+    "normalization": "(channel - 127.5) / 128"
+  },
+  "output": {
+    "shape": [
+      2,
+      192
+    ],
+    "type": "float32",
+    "postprocessing": "L2 normalization"
+  },
+  "batchPolicy": "Compute the identical per-image trunk once, concatenate its 512 floats twice, and preserve the original batch=2 final convolutions. Use the first output. All trained constants and per-face operations are unchanged.",
   "limitations": "Research/demo weights; no product biometric accuracy or presentation-attack certification. Repository license does not establish separate training-data rights.",
-  "releaseStatus": "Release packaging v0.10.2; model bytes and their SHA-256 are unchanged from v0.10.0-candidate. See release notes for verification scope."
+  "releaseStatus": "0.13.8: one-trunk optimization; on Pixel 4 XL arm64, all 136 compared raw and normalized outputs are bit-exact against the upstream two-image graph. Existing model-space ID and enrollment remain compatible.",
+  "sourceSha256": "d8ba40c0127fb8ca9917e8fddc79bbbda063657bc92a496d34da0bc8a760443b",
+  "derivation": "tools/derive_mobilefacenet.py; exact recipe and hashes in single-batch-derivation.json"
 }

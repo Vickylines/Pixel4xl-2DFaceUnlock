@@ -1,0 +1,30 @@
+{
+  "sourceSha256": "d8ba40c0127fb8ca9917e8fddc79bbbda063657bc92a496d34da0bc8a760443b",
+  "derivedSha256": "e96cbe3fa7db64a45d9c63a83d216a9b70cac4aeac6e2fed47ff6684c53517ec",
+  "bytes": 5231976,
+  "singleBatchActivationTensors": 228,
+  "unchangedConstantBuffers": 138,
+  "originalOperators": {
+    "CONV_2D": 35,
+    "RELU": 33,
+    "ABS": 33,
+    "SUB": 33,
+    "MUL": 33,
+    "ADD": 45,
+    "DEPTHWISE_CONV_2D": 17,
+    "RESHAPE": 1
+  },
+  "addedOperator": "CONCATENATION(axis=0, inputs=[39,39]) before original op 227",
+  "input": [
+    1,
+    112,
+    112,
+    3
+  ],
+  "output": [
+    2,
+    192
+  ],
+  "preservedHeadBatch": 2,
+  "trainedWeightsChanged": false
+}

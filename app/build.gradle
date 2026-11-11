@@ -10,8 +10,8 @@ android {
         applicationId "com.yusd.pixel2dface"
         minSdk 29
         targetSdk 36
-        versionCode 37
-        versionName "0.13.7"
+        versionCode 38
+        versionName "0.13.8"
         manifestPlaceholders = [isXposedModule: "true"]
         testInstrumentationRunner project.hasProperty("uiReview")
                 ? "com.yusd.pixel2dface.UiReviewInstrumentation"
@@ -90,8 +90,8 @@ def verifyFaceModel = tasks.register("verifyFaceModel") {
     doLast {
         def digest = java.security.MessageDigest.getInstance("SHA-256")
                 .digest(model.asFile.bytes).encodeHex().toString()
-        if (digest != "d8ba40c0127fb8ca9917e8fddc79bbbda063657bc92a496d34da0bc8a760443b") {
-            throw new GradleException("MobileFaceNet model does not match the pinned upstream asset")
+        if (digest != "e96cbe3fa7db64a45d9c63a83d216a9b70cac4aeac6e2fed47ff6684c53517ec") {
+            throw new GradleException("MobileFaceNet model does not match the pinned derived asset")
         }
     }
 }

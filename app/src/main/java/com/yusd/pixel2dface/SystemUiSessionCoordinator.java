@@ -27,7 +27,7 @@ import de.robv.android.xposed.XposedHelpers;
 /** Owns wake, configuration IPC and one-shot authentication; visual hooks cannot grant access. */
 final class SystemUiSessionCoordinator {
     private static final long PREPARATION_TIMEOUT_MS = 6_000L;
-    private static final long READINESS_RETRY_MS = 120L;
+    private static final long READINESS_RETRY_MS = 32L;
     private static final String USER_SWITCHED = "android.intent.action.USER_SWITCHED";
     private final Object lock = new Object();
     private final UnlockSessionState session = new UnlockSessionState();
@@ -74,7 +74,7 @@ final class SystemUiSessionCoordinator {
         });
     }
 
-    void wake(Object currentMonitor, long delay) {
+    void wake(Object currentMonitor) {
         long generation;
         synchronized (lock) {
             generation = session.wake(SystemClock.elapsedRealtime());
@@ -87,7 +87,7 @@ final class SystemUiSessionCoordinator {
             }
             monitor = new WeakReference<>(currentMonitor);
         }
-        trace("wake_accepted", generation, "delayMs=" + delay);
+        trace("wake_accepted", generation, "checking readiness");
         onMain(() -> {
             if (!isGeneration(generation)) {
                 trace("wake_stale", generation, "current=" + currentGeneration());
@@ -96,7 +96,8 @@ final class SystemUiSessionCoordinator {
             feedback.remove();
             SystemUiCompat.clearStoredWeakAuthentication(currentMonitor, -1);
             feedback.unlockedIcon(false);
-            main.postDelayed(() -> prepare(currentMonitor, generation), delay);
+            // Let the native wake callback finish, then use actual power/keyguard readiness.
+            main.post(() -> prepare(currentMonitor, generation));
         });
     }
 
@@ -753,7 +754,7 @@ final class SystemUiSessionCoordinator {
                     if (Intent.ACTION_SCREEN_ON.equals(action)) {
                         Object current = getMonitor();
                         if (current != null) {
-                            wake(current, 100L);
+                            wake(current);
                         }
                     } else if (Intent.ACTION_SCREEN_OFF.equals(action) || USER_SWITCHED.equals(action)) {
                         invalidate(getMonitor(), action);

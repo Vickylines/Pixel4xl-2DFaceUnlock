@@ -16,16 +16,14 @@ import org.tensorflow.lite.Interpreter;
 /** One interpreter per capture, confined to the serial camera analysis lane. */
 final class MobileFaceEmbedder implements AutoCloseable {
     static final String ASSET = "models/mobilefacenet.tflite";
-    static final String SHA256 = "d8ba40c0127fb8ca9917e8fddc79bbbda063657bc92a496d34da0bc8a760443b";
+    static final String SHA256 = "e96cbe3fa7db64a45d9c63a83d216a9b70cac4aeac6e2fed47ff6684c53517ec";
     // Only immutable, checksum-verified APK weights are shared. Each capture still owns
     // its interpreter, image buffers and output vectors, and clears them when it closes.
     private static ByteBuffer verifiedModel;
     final ByteBuffer input = ByteBuffer.allocateDirect(112 * 112 * 3 * Float.BYTES)
             .order(ByteOrder.nativeOrder());
-    // This pinned graph contains fixed two-image reshapes. Feed two copies instead of
-    // resizing its input to one and relying on an invalid internal graph shape.
-    private final ByteBuffer batchInput = ByteBuffer.allocateDirect(2 * 112 * 112 * 3 * Float.BYTES)
-            .order(ByteOrder.nativeOrder());
+    // The graph computes its trunk once and duplicates only the final 512 features.
+    // Its original batch=2 head preserves the prior native accumulation order.
     private final float[][] output = new float[2][EmbeddingIdentity.DIMENSIONS];
     private final ByteBuffer modelBuffer;
     private Interpreter interpreter;
@@ -38,7 +36,7 @@ final class MobileFaceEmbedder implements AutoCloseable {
             if (created.getInputTensorCount() != 1 || created.getOutputTensorCount() != 1
                     || created.getInputTensor(0).dataType() != DataType.FLOAT32
                     || created.getOutputTensor(0).dataType() != DataType.FLOAT32
-                    || !Arrays.equals(created.getInputTensor(0).shape(), new int[]{2, 112, 112, 3})
+                    || !Arrays.equals(created.getInputTensor(0).shape(), new int[]{1, 112, 112, 3})
                     || !Arrays.equals(created.getOutputTensor(0).shape(), new int[]{2, EmbeddingIdentity.DIMENSIONS})) {
                 throw new IOException("Unexpected face model tensors");
             }
@@ -49,20 +47,13 @@ final class MobileFaceEmbedder implements AutoCloseable {
     float[] embed() {
         if (interpreter == null) throw new IllegalStateException("Face model is closed");
         input.rewind();
-        batchInput.clear();
-        batchInput.put(input);
-        input.rewind();
-        batchInput.put(input);
-        batchInput.rewind();
-        interpreter.run(batchInput, output);
+        interpreter.run(input, output);
         return EmbeddingIdentity.normalize(output[0]);
     }
     @Override public void close() {
         if (interpreter != null) { interpreter.close(); interpreter = null; }
         input.clear();
         while (input.remaining() >= Float.BYTES) input.putFloat(0f);
-        batchInput.clear();
-        while (batchInput.remaining() >= Float.BYTES) batchInput.putFloat(0f);
         for (float[] vector : output) Arrays.fill(vector, 0f);
     }
     private static synchronized ByteBuffer loadModel(Context context) throws IOException {
