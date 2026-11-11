@@ -4,9 +4,9 @@
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel4xl-2DFaceUnlock)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **[0.13.7 正式版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.13.7)**：修复认证写入期间的过期与撤销处理，包含躺卧方向恢复、暗光补光和上滑交接改进，详见 [更新说明](dist/RELEASE-NOTES-0.13.7.md)。
+> **[0.13.8 正式版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.13.8)**：减少重复推理和亮屏等待。Pixel 4 XL 同机前后各测 8 轮，亮屏到认证完成的中位数缩短 17.7%，详见 [更新说明](dist/RELEASE-NOTES-0.13.8.md)。
 
-一瞥是 Pixel4xl 2D Face Unlock 的新名字。0.13.7 通用构建支持 Android 10–17，面向已 Root、已安装 LSPosed 且保留兼容 SystemUI 接口的设备；同一 APK 包含 ARM32、ARM64、x86 和 x86_64。锁屏接口按运行时能力选择，不再限制 Google Pixel 品牌。
+一瞥是 Pixel4xl 2D Face Unlock 的新名字。0.13.8 通用构建支持 Android 10–17，面向已 Root、已安装 LSPosed 且保留兼容 SystemUI 接口的设备；同一 APK 包含 ARM32、ARM64、x86 和 x86_64。锁屏接口按运行时能力选择，不再限制 Google Pixel 品牌。
 
 识别使用离线 MobileFaceNet 与 v4 模板，已有 v3 模板继续使用纹理与几何双信号后端。相机、识别、存储与 SystemUI 会话分开管理；识别与一次性授权、系统弱认证策略及锁屏退出分别复核。适配范围见 [兼容性矩阵](COMPATIBILITY.md)。
 
@@ -15,6 +15,8 @@
 > 本项目不是 Google、LineageOS、Magisk 或 LSPosed 的官方项目。普通 RGB 2D 人脸可能被照片或视频绕过，只适合便利解锁。
 
 ## 下载
+
+- [下载 0.13.8 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.8/Pixel2DFaceUnlock-universal-0.13.8.apk) · [安装说明](dist/INSTALL-ZH-0.13.8.txt) · [SHA-256](dist/SHA256SUMS-0.13.8.txt)
 
 - [下载 0.13.7 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.7/Pixel2DFaceUnlock-universal-0.13.7.apk) · [安装说明](dist/INSTALL-ZH-0.13.7.txt) · [SHA-256](dist/SHA256SUMS-0.13.7.txt)
 
@@ -37,6 +39,10 @@
 保留版本在 Pixel 4 XL / LineageOS 24.0 / Android 17 上的验证记录见各版发布说明。其他 Android 版本与厂商 ROM 的状态见兼容性矩阵；关键认证接口不兼容时保持锁定。访客／辅助用户、Android 9 及更早版本、Android 18 及后续版本不在当前适配范围。
 
 详细状态见 [COMPATIBILITY.md](COMPATIBILITY.md)。
+
+## 0.13.8 解锁提速
+
+模型对同一张脸的主体计算从两次减为一次，保留原始末端运算；亮屏后按系统实际就绪状态启动，省去固定等待。Pixel 4 XL 同机前后各测 8 轮，亮屏到认证完成的中位数由 1.176 秒降至 0.968 秒，进入桌面由 1.818 秒降至 1.595 秒，两组均一次上滑成功 8/8。模型推理中位数由 39.9 毫秒降至 19.3 毫秒，136 组输出逐位一致。身份阈值、睁眼和连续确认要求保持原值，详见 [性能实测记录](docs/performance-0.13.8.md)。
 
 ## 0.13.3 启动提速
 

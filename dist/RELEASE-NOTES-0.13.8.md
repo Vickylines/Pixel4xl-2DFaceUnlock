@@ -6,4 +6,8 @@ Pixel 4 XL 同机前后各测 8 轮：亮屏到认证完成的中位数由 1.176
 
 身份阈值、睁眼检查和连续确认规则保持原值。覆盖安装保留已有人脸与设置。265 项逻辑检查和 329 项手机端检查通过，包含 0.13.7 的认证有效期复查修复。
 
-完整测量方法及范围见 [性能记录](../docs/performance-0.13.8.md)。这是已安装验证的本地版本。
+已同签名覆盖安装到 Pixel 4 XL / Android 17，安装前后人脸与设置文件校验值一致。8 组快速休眠请求和 3 组屏幕就绪后的电源键检查通过，息屏后相机正常释放。
+
+[下载正式 APK](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.8/Pixel2DFaceUnlock-universal-0.13.8.apk) · [安装说明](INSTALL-ZH-0.13.8.txt) · [SHA-256](SHA256SUMS-0.13.8.txt)
+
+发布 APK 与此次手机安装验证的文件一致。完整测量方法及范围见 [性能记录](../docs/performance-0.13.8.md)。
