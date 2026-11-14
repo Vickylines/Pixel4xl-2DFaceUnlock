@@ -82,8 +82,8 @@ final class AnimationGallery {
             content.addView(line, Ui.space(context, 0, 10));
         }
         new MaterialAlertDialogBuilder(context).setTitle("锁屏动画").setView(scroll)
-                .setNegativeButton("返回", null)
-                .setPositiveButton("使用此动画", (dialog, which) -> onSelect.accept(pending[0])).show();
+                .setNegativeButton("取消", null)
+                .setPositiveButton("使用", (dialog, which) -> onSelect.accept(pending[0])).show();
     }
 
     private static void updateSelection(Context context, MaterialCardView card, TextView label, boolean selected) {

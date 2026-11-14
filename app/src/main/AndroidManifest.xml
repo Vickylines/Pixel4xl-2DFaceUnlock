@@ -40,7 +40,7 @@
             android:value="${isXposedModule}" />
         <meta-data
             android:name="xposeddescription"
-            android:value="Android 10–17 通用 2D 人脸锁屏解锁，适配 AOSP 与兼容的 SystemUI" />
+            android:value="Android 10–17 离线人脸解锁" />
         <meta-data
             android:name="xposedminversion"
             android:value="93" />

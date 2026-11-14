@@ -39,7 +39,7 @@ public final class CaptureRecoveryTest {
                     & WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             assertNotEquals(0, activity.getWindow().getAttributes().flags
                     & WindowManager.LayoutParams.FLAG_SECURE);
-            assertTrue(find(activity.getWindow().getDecorView(), "开启相机权限").performClick());
+            assertTrue(find(activity.getWindow().getDecorView(), "授权相机").performClick());
             assertEquals("android.settings.APPLICATION_DETAILS_SETTINGS",
                     shadowOf(activity).getNextStartedActivityForResult().intent.getAction());
         }
@@ -49,7 +49,7 @@ public final class CaptureRecoveryTest {
         try (ActivityController<FaceCaptureActivity> controller = capture()) {
             FaceCaptureActivity activity = controller.get();
             deny(activity);
-            find(activity.getWindow().getDecorView(), "开启相机权限").performClick();
+            find(activity.getWindow().getDecorView(), "授权相机").performClick();
             int request = shadowOf(activity).getNextStartedActivityForResult().requestCode;
             shadowOf(RuntimeEnvironment.getApplication()).grantPermissions(Manifest.permission.CAMERA);
             activity.onActivityResult(request, Activity.RESULT_CANCELED, null);
@@ -84,7 +84,7 @@ public final class CaptureRecoveryTest {
             FaceCaptureActivity activity = controller.get();
             activity.getOnBackPressedDispatcher().onBackPressed();
             assertTrue(activity.isFinishing());
-            assertNull(find(activity.getWindow().getDecorView(), "这次未能识别"));
+            assertNull(find(activity.getWindow().getDecorView(), "重试"));
         }
     }
 

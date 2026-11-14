@@ -111,7 +111,7 @@ final class CameraCaptureSession {
                 try {
                     if (!task.isSuccessful() && !gate.isClosing()) {
                         Log.w("Pixel2DFace", "Detector warm-up failed", task.getException());
-                        listener.onCameraError("人脸引擎初始化失败");
+                        listener.onCameraError("暂时无法识别");
                     }
                     Log.i("Pixel2DFace", "Detector warm-up elapsedMs="
                             + (SystemClock.elapsedRealtime() - warmUpAt));
@@ -149,8 +149,8 @@ final class CameraCaptureSession {
                             analysis, preview);
                 }
             } catch (Exception failure) {
-                listener.onCameraError("无法启动前置摄像头："
-                        + failure.getClass().getSimpleName());
+                Log.w("Pixel2DFace", "Front camera unavailable", failure);
+                listener.onCameraError("无法打开相机");
             }
         }, owner.getMainExecutor());
     }

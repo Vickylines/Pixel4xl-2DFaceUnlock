@@ -25,7 +25,7 @@ final class DeviceCredentialConfirmation {
         Intent intent = activity.getSystemService(KeyguardManager.class)
                 .createConfirmDeviceCredentialIntent(title, null);
         if (intent == null) {
-            Toast.makeText(activity, "请先设置锁屏 PIN、图案或密码", Toast.LENGTH_LONG).show();
+            Toast.makeText(activity, "请先设置 PIN、图案或密码", Toast.LENGTH_LONG).show();
             onRejected.run();
             return;
         }
@@ -35,7 +35,7 @@ final class DeviceCredentialConfirmation {
             activity.startActivityForResult(intent, REQUEST_CREDENTIAL);
         } catch (ActivityNotFoundException unavailable) {
             cancel();
-            Toast.makeText(activity, "无法打开系统身份确认", Toast.LENGTH_LONG).show();
+            Toast.makeText(activity, "无法验证身份", Toast.LENGTH_LONG).show();
             onRejected.run();
         }
     }

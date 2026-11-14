@@ -59,7 +59,7 @@ final class CaptureContentView extends FrameLayout {
         TextView title = label(enrollment ? "录入面容" : "测试识别", 28);
         title.setAccessibilityHeading(true);
         controls.addView(title, Ui.space(context, 0, 8));
-        instruction = label("正视屏幕，保持自然", 18);
+        instruction = label("看向屏幕", 18);
         instruction.setMinHeight(dp(56));
         instruction.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         controls.addView(instruction, Ui.space(context, 0, 8));
@@ -103,16 +103,15 @@ final class CaptureContentView extends FrameLayout {
         ResultGlyph glyph = new ResultGlyph(getContext(), success);
         glyph.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         result.addView(glyph, new LinearLayout.LayoutParams(dp(104), dp(104)));
-        TextView title = label(success ? enrollment ? "面容已录入" : "识别通过"
-                : enrollment ? "录入未完成" : "这次未能识别", 28);
+        String outcome = success ? (enrollment ? "面容已录入" : "识别成功") : message;
+        TextView title = label(outcome, 28);
         title.setAccessibilityHeading(true);
         result.addView(title, Ui.space(getContext(), 28, 16));
-        if (!success) result.addView(label(message, 18), Ui.space(getContext(), 0, 28));
         MaterialButton primary = Ui.button(getContext(), success && enrollment ? "完成" : retryLabel, true);
         primary.setOnClickListener(v -> { if (success && enrollment) done.run(); else retry.run(); });
         result.addView(primary, Ui.space(getContext(), 12, 12));
         if (!success || !enrollment) {
-            MaterialButton back = Ui.button(getContext(), "返回设置", false);
+            MaterialButton back = Ui.button(getContext(), "返回", false);
             back.setOnClickListener(v -> done.run());
             result.addView(back);
         }

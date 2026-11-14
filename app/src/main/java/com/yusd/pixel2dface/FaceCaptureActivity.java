@@ -120,7 +120,7 @@ public class FaceCaptureActivity extends ComponentActivity {
     private void requestCamera() {
         if (finished.get()) return;
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) initialize();
-        else if (isUnlock()) finishFailure(false, "未授予相机权限");
+        else if (isUnlock()) finishFailure(false, "相机未授权");
         else requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA);
     }
 
@@ -141,7 +141,7 @@ public class FaceCaptureActivity extends ComponentActivity {
         super.onRequestPermissionsResult(requestCode, permissions, results);
         if (requestCode != REQUEST_CAMERA || finished.get()) return;
         if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) initialize();
-        else finishFailure(false, "需要相机权限才能识别人脸");
+        else finishFailure(false, "相机未授权");
     }
 
     private void initialize() {
@@ -155,7 +155,7 @@ public class FaceCaptureActivity extends ComponentActivity {
                 recordFrameOutcome("camera_" + reason);
                 passiveFailure.breakContinuity();
                 if (recognition != null) { recognition.clear(); showProgress(0); }
-                showDetail("人脸检测暂时不可用，请保持手机稳定");
+                showDetail("拿稳手机");
             }
             @Override public void onClosed() { extractor.close(); }
             @Override public void onCameraError(String message) { finishFailure(false, message); }
@@ -166,7 +166,7 @@ public class FaceCaptureActivity extends ComponentActivity {
             }
         });
         // Include initialization in the deadline so a stalled provider cannot leave a host alive.
-        main.postDelayed(() -> finishFailure(isUnlock(), "识别超时，请重试"),
+        main.postDelayed(() -> finishFailure(isUnlock(), isEnrollment() ? "录入超时" : "识别超时"),
                 isEnrollment() ? ENROLLMENT_TIMEOUT_MS : RECOGNITION_TIMEOUT_MS);
         camera.execute(() -> {
             try {
@@ -175,10 +175,10 @@ public class FaceCaptureActivity extends ComponentActivity {
                             ? TemplateStore.consumeAuthorizedRecognitionSettings(this, sessionToken)
                             : TemplateStore.loadRecognitionSettings(this);
                     if (settings == null) {
-                        finishFailure(false, "识别会话未获授权、已过期或配置已变更"); return;
+                        finishFailure(false, "识别已结束"); return;
                     }
                     if (settings.model == null) {
-                        finishFailure(false, "尚未录入有效人脸，请重新录入"); return;
+                        finishFailure(false, "请先录入面容"); return;
                     }
                     if (isUnlock() && (!settings.state.enabled
                             || settings.state.lockoutUntil > System.currentTimeMillis())) {
@@ -210,13 +210,13 @@ public class FaceCaptureActivity extends ComponentActivity {
                                     + " initMs=" + (engineReadyAt - createdAt));
                         } catch (Exception | LinkageError failure) {
                             android.util.Log.w("Pixel2DFace", "Capture initialization failed", failure);
-                            finishFailure(false, "人脸引擎初始化失败");
+                            finishFailure(false, "暂时无法识别");
                         }
                     });
                 });
             } catch (Exception | LinkageError failure) {
                 android.util.Log.w("Pixel2DFace", "Capture initialization failed", failure);
-                finishFailure(false, "人脸引擎初始化失败");
+                finishFailure(false, "暂时无法识别");
             }
         });
     }
@@ -231,7 +231,7 @@ public class FaceCaptureActivity extends ComponentActivity {
         FaceFrameExtractor.Result frame = extractor.extract(image, rotation, faces);
         if (isUnlock() && passiveFailure.shouldStop(frame.reason, capturedAt)) {
             recordFrameOutcome("CLOSED_EYES_STOP");
-            finishFailure(true, "持续闭眼，已停止本轮识别，请使用密码或重新亮屏");
+            finishFailure(true, "请用锁屏密码");
             return;
         }
         if (frame.reason != FrameQualityPolicy.Reason.NONE) {
@@ -250,9 +250,9 @@ public class FaceCaptureActivity extends ComponentActivity {
             if (capturedAt > evaluatedAt
                     || evaluatedAt - capturedAt > RecognitionEngine.MAX_FRAME_AGE_MS) return;
             if (!enrollment.add(capturedAt, frame.sample, frame.texture)) {
-                showDetail("请自然正视镜头并保持稳定"); return;
+                showDetail("看向屏幕"); return;
             }
-            showDetail("保持自然，正在记住你的面容");
+            showDetail("");
             showProgress(enrollment.count() / (float) EmbeddingIdentity.SAMPLE_COUNT);
             if (enrollment.isComplete() && !finished.get()) {
                 IdentityTemplate model = enrollment.buildModel();
@@ -263,7 +263,7 @@ public class FaceCaptureActivity extends ComponentActivity {
                 try { saved = TemplateStore.saveIdentityModel(this, model); }
                 catch (RuntimeException failure) { saved = false; }
                 if (saved) publishSuccess(model.maximumThreshold(), false);
-                else publishFailure("保存人脸失败，请重试");
+                else publishFailure("面容保存失败");
             }
             return;
         }
@@ -275,9 +275,7 @@ public class FaceCaptureActivity extends ComponentActivity {
                 : decision.votes.stable ? "MATCH_PENDING" : "MATCH_UNSTABLE"
                 : decision.reason.name());
         if (Float.isFinite(decision.match.score)) bestScore = Math.min(bestScore, decision.match.score);
-        showDetail(decision.reason == FrameQualityPolicy.Reason.NONE
-                ? "保持片刻"
-                : decision.reason.message);
+        showDetail(decision.reason.message);
         showProgress(decision.votes.confirmed ? 1f
                 : Math.min(.9f, decision.votes.matches / (float) RecognitionStabilizer.REQUIRED_MATCHES));
         if (decision.votes.confirmed) finishSuccess(decision.votes.meanScore, decision.votes.fastPath);
@@ -295,7 +293,7 @@ public class FaceCaptureActivity extends ComponentActivity {
         // it must run before this reset, and a fifth failure must retain its lockout.
         StoreTasks.execute(() -> {
             if (!TemplateStore.validateAndRecordSuccess(this, settings)) {
-                publishFailure("配置已变更或无法保存，请重新亮屏识别"); return;
+                publishFailure("识别中断"); return;
             }
             publishSuccess(score, fastPath);
         });
@@ -384,7 +382,7 @@ public class FaceCaptureActivity extends ComponentActivity {
         boolean permissionMissing = checkSelfPermission(Manifest.permission.CAMERA)
                 != PackageManager.PERMISSION_GRANTED;
         content.showResult(success, isEnrollment(), message,
-                permissionMissing ? "开启相机权限" : "再试一次", () -> {
+                permissionMissing ? "授权相机" : "重试", () -> {
                     if (permissionMissing) startActivityForResult(new Intent(
                             Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                             Uri.parse("package:" + getPackageName())), REQUEST_CAMERA);

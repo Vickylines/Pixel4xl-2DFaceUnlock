@@ -7,7 +7,6 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -29,8 +28,6 @@ import com.google.android.material.button.MaterialButtonToggleGroup;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.snackbar.Snackbar;
-import java.text.DateFormat;
-import java.util.Date;
 import java.util.function.BooleanSupplier;
 
 public final class MainActivity extends ComponentActivity {
@@ -53,7 +50,6 @@ public final class MainActivity extends ComponentActivity {
     private MaterialButtonToggleGroup profileChooser;
     private TemplateStore.StateSnapshot displayedState;
     private long heartbeat;
-    private String compatibility = "";
     private int hookVersion;
     private boolean rendering, saving, resumed;
     private int refreshGeneration;
@@ -130,7 +126,7 @@ public final class MainActivity extends ComponentActivity {
         face.setImageResource(R.drawable.ic_face_unlock);
         face.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         hero.addView(face, new LinearLayout.LayoutParams(dp(60), dp(60)));
-        statusView = Ui.heading(this, "正在读取设置", 25);
+        statusView = Ui.heading(this, "加载中", 25);
         statusView.setTextColor(getColor(R.color.on_accent_surface));
         statusView.setGravity(Gravity.CENTER);
         hero.addView(statusView, Ui.space(this, 22, 22));
@@ -141,7 +137,7 @@ public final class MainActivity extends ComponentActivity {
         LinearLayout faceSettings = section(root, "面容");
         faceSection = (View) faceSettings.getParent();
         enabledSwitch = new MaterialSwitch(this);
-        enabledSwitch.setText("锁屏解锁");
+        enabledSwitch.setText("人脸解锁");
         enabledSwitch.setTextSize(17);
         enabledSwitch.setMinHeight(dp(60));
         enabledSwitch.setOnCheckedChangeListener((button, checked) -> {
@@ -166,7 +162,7 @@ public final class MainActivity extends ComponentActivity {
         deleteButton.setTextColor(new ColorStateList(new int[][]{
                 new int[]{-android.R.attr.state_enabled}, new int[]{}}, new int[]{
                 (getColor(R.color.muted) & 0x00FFFFFF) | 0x61000000, getColor(R.color.danger)}));
-        LinearLayout recognition = section(root, "识别偏好");
+        LinearLayout recognition = section(root, "识别模式");
         profileChooser = chooser();
         strictRecognitionButton = choice(profileChooser, "严格", () -> selectRecognitionProfile(0));
         balancedRecognitionButton = choice(profileChooser, "均衡", () -> selectRecognitionProfile(1));
@@ -222,13 +218,11 @@ public final class MainActivity extends ComponentActivity {
         StoreTasks.execute(() -> {
             TemplateStore.StateSnapshot state = TemplateStore.readState(this);
             long lastHeartbeat = TemplateStore.getHookHeartbeat(this);
-            String hookCompatibility = TemplateStore.getHookCompatibility(this);
             int runtimeVersion = HookRuntimeStore.moduleVersion(this);
             runOnUiThread(() -> {
                 if (!resumed || isFinishing() || isDestroyed() || request != refreshGeneration) return;
                 displayedState = state;
                 heartbeat = lastHeartbeat;
-                compatibility = hookCompatibility;
                 hookVersion = runtimeVersion;
                 renderState();
                 setControlsEnabled(!saving && !credentials.isPending());
@@ -261,21 +255,21 @@ public final class MainActivity extends ComponentActivity {
     }
     private void renderSummary() {
         String title, action;
-        if (!deviceSecure()) { title = "先设置屏幕锁定"; action = "设置屏幕锁定"; }
-        else if (!displayedState.storageAvailable) { title = "面容数据需要修复"; action = "删除面容"; }
+        if (!deviceSecure()) { title = "未设置锁屏"; action = "设置锁屏"; }
+        else if (!displayedState.storageAvailable) { title = "面容数据异常"; action = "删除面容"; }
         else if (!displayedState.enrolled) {
-            title = displayedState.legacyTemplates ? "面容需要重新录入" : "从认识你开始";
+            title = displayedState.legacyTemplates ? "需重新录入" : "未录入面容";
             action = "录入面容";
-        } else if (!cameraGranted()) { title = "相机权限未开启"; action = "开启相机权限"; }
+        } else if (!cameraGranted()) { title = "相机未授权"; action = "授权相机"; }
         else if (VALIDATION) { title = "面容已录入"; action = "测试识别"; }
-        else if (!displayedState.enabled) { title = "人脸解锁已暂停"; action = "启用解锁"; }
+        else if (!displayedState.enabled) { title = "未启用"; action = "启用解锁"; }
         else if (displayedState.lockoutUntil > System.currentTimeMillis()) {
             long seconds = (displayedState.lockoutUntil - System.currentTimeMillis() + 999) / 1000;
-            title = seconds < 60 ? seconds + " 秒后恢复解锁" : "稍后恢复解锁";
+            title = seconds < 60 ? seconds + " 秒后恢复" : "暂时无法解锁";
             action = "测试识别";
-        } else if (!connectedThisBoot()) { title = "等待模块连接"; action = "连接锁屏模块"; }
-        else if (updatePending()) { title = "重启以完成更新"; action = "查看更新状态"; }
-        else { title = "锁屏解锁已开启"; action = "测试识别"; }
+        } else if (!connectedThisBoot()) { title = "模块未连接"; action = "查看连接"; }
+        else if (updatePending()) { title = "重启后生效"; action = "查看更新"; }
+        else { title = "已启用"; action = "测试识别"; }
         if (!statusView.getText().toString().equals(title)) statusView.setText(title);
         if (!primaryButton.getText().toString().equals(action)) primaryButton.setText(action);
         testButton.setVisibility(displayedState.enrolled && cameraGranted()
@@ -294,9 +288,9 @@ public final class MainActivity extends ComponentActivity {
         else startCapture(Constants.MODE_TEST, REQUEST_TEST);
     }
     private void confirmDeletion() {
-        new MaterialAlertDialogBuilder(this).setTitle("删除已录入的面容？")
-                .setMessage("删除后，人脸解锁会关闭。")
-                .setNegativeButton("保留", null)
+        new MaterialAlertDialogBuilder(this).setTitle("删除面容？")
+                .setMessage("删除后将关闭人脸解锁")
+                .setNegativeButton("取消", null)
                 .setPositiveButton("删除", (dialog, which) ->
                         saveProtectedSetting(() -> TemplateStore.tryClearTemplates(this))).show();
     }
@@ -314,20 +308,19 @@ public final class MainActivity extends ComponentActivity {
         AnimationGallery.preview(this, displayedState.animationStyle);
     }
     private void showDiagnostics() {
-        String connection = heartbeat == 0 ? "尚未收到连接"
-                : "上次连接：" + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
-                        .format(new Date(heartbeat));
-        String details = VALIDATION ? "独立验证版\n" : connection + "\n\n"
-                + "在 LSPosed 中启用本模块，作用域选择“系统界面”，然后重启。重启后的首次解锁需要输入 PIN。\n";
-        if (!VALIDATION && updatePending()) details = "锁屏仍在运行旧版模块。重启手机后，新动画和本次修复才会生效；之后切换动画无需重启。\n\n" + details;
-        if (!VALIDATION && hookVersion > 0) details += "\n锁屏运行版本：" + hookVersion
-                + " / 已安装版本：" + BuildConfig.VERSION_CODE + "\n";
-        if (!compatibility.isEmpty()) details += "\n" + compatibility + "\n";
-        details += "\n" + getString(R.string.app_name) + " " + BuildConfig.VERSION_NAME + "\n" + Build.MODEL
-                + " / Android " + Build.VERSION.RELEASE
-                + "\n\n面容在本机处理，不上传照片。普通前摄的 2D 识别可能被照片或视频绕过，不适用于支付。";
+        String details = getString(R.string.app_name) + " " + BuildConfig.VERSION_NAME;
+        if (!VALIDATION) {
+            if (!connectedThisBoot()) {
+                details += "\n\n锁屏模块未连接\n在 LSPosed 启用模块，勾选「系统界面」后重启手机。";
+            } else if (updatePending()) {
+                details += "\n\n重启手机以更新锁屏模块。";
+            } else {
+                details += "\n\n锁屏模块已连接\n运行版本 " + hookVersion;
+            }
+        }
+        details += "\n\n面容仅在本机处理。照片或视频也可能通过识别。";
         new MaterialAlertDialogBuilder(this).setTitle("连接与关于").setMessage(details)
-                .setNeutralButton("刷新连接", (dialog, which) -> refreshState())
+                .setNeutralButton("刷新", (dialog, which) -> refreshState())
                 .setPositiveButton("完成", null).show();
     }
     private void startCapture(String mode, int requestCode) {
@@ -337,7 +330,7 @@ public final class MainActivity extends ComponentActivity {
     private void saveProtectedSetting(BooleanSupplier write) {
         if (saving || credentials.isPending()) return;
         setControlsEnabled(false);
-        credentials.request("确认修改人脸解锁设置", () -> saveSetting(write, true), this::refreshState);
+        credentials.request("确认修改设置", () -> saveSetting(write, true), this::refreshState);
     }
     private void saveSetting(BooleanSupplier write) {
         saveSetting(write, false);
@@ -351,7 +344,7 @@ public final class MainActivity extends ComponentActivity {
             runOnUiThread(() -> {
                 saving = false;
                 if (!resumed || isFinishing() || isDestroyed()) return;
-                if (!saved) Snackbar.make(primaryButton, "未能保存，原设置已保留", Snackbar.LENGTH_LONG)
+                if (!saved) Snackbar.make(primaryButton, "保存失败，原设置已保留", Snackbar.LENGTH_LONG)
                         .setAction("重试", v -> {
                             if (protectedSetting) saveProtectedSetting(write);
                             else saveSetting(write);
@@ -387,7 +380,7 @@ public final class MainActivity extends ComponentActivity {
         super.onRequestPermissionsResult(requestCode, permissions, results);
         if (requestCode != REQUEST_CAMERA) return;
         if (!cameraGranted() && !shouldShowRequestPermissionRationale(Manifest.permission.CAMERA))
-            new MaterialAlertDialogBuilder(this).setTitle("相机权限已关闭")
+            new MaterialAlertDialogBuilder(this).setTitle("相机未授权")
                     .setNegativeButton("返回", null)
                     .setPositiveButton("前往设置", (dialog, which) -> startActivity(new Intent(
                             Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))))

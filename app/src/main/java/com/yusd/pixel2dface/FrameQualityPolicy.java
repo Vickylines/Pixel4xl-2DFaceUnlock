@@ -16,17 +16,13 @@ final class FrameQualityPolicy {
     private FrameQualityPolicy() { }
 
     enum Reason {
-        NONE(""), NO_FACE("未检测到人脸"), MULTIPLE_FACES("画面中只能有一张人脸"),
-        TOO_SMALL("请靠近一点"), OFF_CENTER("请将脸移到画面中央"),
-        EYES_CLOSED("请自然睁眼并看向屏幕"),
-        EYES_UNAVAILABLE("请让双眼清晰地出现在画面中"), POSE("请自然正视屏幕"),
-        TOO_DARK("光线太暗，请稍微提高屏幕亮度"),
-        TOO_BRIGHT("画面过亮，请避开强光"), LOW_CONTRAST("面部光线不足，请面向屏幕"),
-        BLURRED("画面不够清晰，请保持手机稳定"), INVALID_SIGNALS("画面数据无效，请重试"),
-        INVALID_DESCRIPTOR("请让完整面部正对屏幕"),
-        STALE_SESSION("识别会话已结束"), STALE_FRAME("画面已过期，请保持手机稳定"),
-        INVALID_TIME("画面时间无效，请重试"),
-        IDENTITY_MISMATCH("人脸未匹配，请自然正视屏幕");
+        NONE(""), NO_FACE("将脸移入框内"), MULTIPLE_FACES("画面只留一人"),
+        TOO_SMALL("靠近一点"), OFF_CENTER("将脸移到中央"),
+        EYES_CLOSED("睁眼看向屏幕"), EYES_UNAVAILABLE("露出双眼"), POSE("正对屏幕"),
+        TOO_DARK("调亮屏幕"), TOO_BRIGHT("避开强光"), LOW_CONTRAST("补一点光"),
+        BLURRED("拿稳手机"), INVALID_SIGNALS("拿稳手机"), INVALID_DESCRIPTOR("正对屏幕"),
+        STALE_SESSION("识别已结束"), STALE_FRAME("拿稳手机"), INVALID_TIME("拿稳手机"),
+        IDENTITY_MISMATCH("未匹配，请正对屏幕");
 
         final String message;
         Reason(String message) { this.message = message; }
