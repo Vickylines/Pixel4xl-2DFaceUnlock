@@ -2,7 +2,9 @@
 
 ## 启动流水线
 
-消费私有一次性授权并确认锁屏与电源状态后，主线程附加宿主，分析线程创建检测器、发起预热和相机绑定，再初始化身份推理器。相机开启与初始化可重叠，但真实帧提取仍排在同一分析线程的初始化之后。预热使用固定空白图，不调用识别监听器；在途任务门闩覆盖预热，关屏取消后的资源释放等待原生任务完成。
+消费私有一次性授权并确认锁屏与电源状态后，主线程附加宿主并绑定相机。分析线程用空白图预热检测器，验证线程同时初始化推理器。第一帧进入验证前须等推理器就绪。
+
+每帧的两路检测完成后，分析线程采样图像并归还 CameraX 帧。下一帧开始检测时，验证线程可继续处理上一帧。验证线程按采集顺序应用帧拒绝和身份判定。分析线程等待上一帧验证完成后复用采样缓冲区。
 
 MobileFaceEmbedder 首次从 APK 映射模型并核对固定 SHA-256，同一进程后续仅复用只读模型权重。每个会话独立创建推理器、图像缓冲和输出，关闭时清理。身份快照、授权、结果和相机图像均不缓存跨会话复用。性能验证见 [0.13.3 记录](dist/PERFORMANCE-0.13.3-20261109.md)。
 
@@ -54,12 +56,12 @@ Java 源码位于 `app/src/main/java/com/yusd/pixel2dface/`。
 
 ## 线程、资源与时钟
 
-- 应用主线程负责界面、相机绑定/解绑及宿主窗口。每个 `CameraCaptureSession` 使用一个串行分析执行器，涵盖配置加载、ML Kit 回调、特征计算与结果提交。其他配置写入通过 `StoreTasks` 的独立队列执行。
+- 应用主线程负责界面、相机绑定与解绑及宿主窗口。每个 `CameraCaptureSession` 有一条串行分析队列和一条串行验证队列。前者加载配置、运行 ML Kit 并采样，后者做身份推理与多帧判定。存储操作继续通过 `StoreTasks` 排队。
 - SystemUI 主线程负责原生状态和反馈；配置读取、授权及结果复核在独立 IPC 执行器中完成。纯 `UnlockSessionState` 由协调器锁保护，异步回调均检查 generation。
 - `close()` 先禁止新帧，仅解绑本对象持有的 `analysis`/`preview`，不调用 `unbindAll()`。旧会话关闭不会解绑另一个会话的用例。
-- 检测器正在推理时不提前关闭；完成回调关闭 `ImageProxy`、释放帧槽，随后才能关闭检测器与执行器。`LumaPlane` 在 `finally` 中解绑，长期工作区不保留 CameraX 平面缓冲区。
+- 两路检测均返回且采样结束后关闭 `ImageProxy`。关闭会话会停止接收新帧，等待在途检测读完当前帧，然后释放检测器。验证队列轮到清理任务时关闭推理器，并清除模型输入缓冲区。`LumaPlane` 在 `finally` 中解绑 CameraX 平面。
 - 提取出的 texture 借用工作区，下一次提取即覆盖。同步识别直接使用；录入必须通过 `EnrollmentSession.add()` 克隆。不要把借用数组排入延迟任务。
-- 相机 sensor timestamp 的纪元不假定等于 `elapsedRealtime()`。`FrameTimestampNormalizer` 以首帧建立锚点，并根据每帧到达时间取最小映射 offset；首帧排队延迟下降时下调映射，避免后续帧被误判为未来证据。重复 sensor 时间、回退到达时间和重复毫秒证据仍被拒绝。
+- 相机声明 `SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME` 时，直接用传感器时间计算帧龄。相机时基未知时，`FrameTimestampNormalizer` 用本轮最小观测偏移映射时间。回退、重复和未来的时间戳会被拒绝。[Android 相机时间戳说明](https://developer.android.com/reference/android/hardware/camera2/CameraCharacteristics#SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME)
 - detector 开始到回调、归一化采集时间到评估时间均限制 750 ms；提取后录入/识别再次检查。未来、重复、回退或会话开始前的证据不能计票。
 - Engine `clear()` 清除连续证据并保留重放水位；`beginSession()` 明确建立新代次并重置时钟，`endSession()` 使迟到回调失效。Activity 停止或销毁时结束采集。
 

@@ -13,15 +13,12 @@ import java.util.Arrays;
 import org.tensorflow.lite.DataType;
 import org.tensorflow.lite.Interpreter;
 
-/** One interpreter per capture, confined to the serial camera analysis lane. */
+/** One interpreter per capture, confined to the verification lane. */
 final class MobileFaceEmbedder implements AutoCloseable {
     static final String ASSET = "models/mobilefacenet.tflite";
     static final String SHA256 = "e96cbe3fa7db64a45d9c63a83d216a9b70cac4aeac6e2fed47ff6684c53517ec";
-    // Only immutable, checksum-verified APK weights are shared. Each capture still owns
-    // its interpreter, image buffers and output vectors, and clears them when it closes.
+    // Only immutable, checksum-verified APK weights are shared across captures.
     private static ByteBuffer verifiedModel;
-    final ByteBuffer input = ByteBuffer.allocateDirect(112 * 112 * 3 * Float.BYTES)
-            .order(ByteOrder.nativeOrder());
     // The graph computes its trunk once and duplicates only the final 512 features.
     // Its original batch=2 head preserves the prior native accumulation order.
     private final float[][] output = new float[2][EmbeddingIdentity.DIMENSIONS];
@@ -44,16 +41,19 @@ final class MobileFaceEmbedder implements AutoCloseable {
         } finally { if (interpreter == null) created.close(); }
     }
 
-    float[] embed() {
+    static ByteBuffer allocateInput() {
+        return ByteBuffer.allocateDirect(112 * 112 * 3 * Float.BYTES).order(ByteOrder.nativeOrder());
+    }
+
+    float[] embed(ByteBuffer input) {
         if (interpreter == null) throw new IllegalStateException("Face model is closed");
         input.rewind();
         interpreter.run(input, output);
         return EmbeddingIdentity.normalize(output[0]);
     }
+
     @Override public void close() {
         if (interpreter != null) { interpreter.close(); interpreter = null; }
-        input.clear();
-        while (input.remaining() >= Float.BYTES) input.putFloat(0f);
         for (float[] vector : output) Arrays.fill(vector, 0f);
     }
     private static synchronized ByteBuffer loadModel(Context context) throws IOException {

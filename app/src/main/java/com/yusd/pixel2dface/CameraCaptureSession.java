@@ -1,50 +1,61 @@
 package com.yusd.pixel2dface;
 
+import android.hardware.SensorManager;
+import android.hardware.camera2.CameraCharacteristics;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 import android.util.Size;
-import android.hardware.SensorManager;
 import android.view.OrientationEventListener;
 
 import androidx.activity.ComponentActivity;
-import androidx.camera.core.CameraSelector;
+import androidx.annotation.MainThread;
+import androidx.camera.camera2.interop.Camera2CameraInfo;
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop;
 import androidx.camera.core.Camera;
+import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ExposureState;
+import androidx.camera.core.ExperimentalCameraInfo;
+import androidx.camera.core.ExperimentalGetImage;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 
+import com.google.android.gms.tasks.Task;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.face.Face;
 
+import java.io.IOException;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.RejectedExecutionException;
 
-/** Owns one camera binding, a two-stage detector and one serial analysis lane per Activity. */
-@androidx.annotation.OptIn(markerClass = androidx.camera.core.ExperimentalGetImage.class)
+/** Owns the camera, with one detection and one ordered verification allowed in flight. */
+@androidx.annotation.OptIn(markerClass = {
+        ExperimentalGetImage.class, ExperimentalCamera2Interop.class, ExperimentalCameraInfo.class
+})
 final class CameraCaptureSession {
     interface Listener {
-        void onFrame(ImageProxy image, int rotation, List<Face> faces, long capturedAtMs);
+        void onReady();
+        void onFrame(FaceFrameExtractor.Result frame, long capturedAtMs, long detectedAtMs);
         void onRejectedFrame(String reason);
         void onCameraError(String message);
         default void onLowLight() { }
-        default void onClosed() { }
     }
 
-    private static final long MAX_ANALYSIS_AGE_MS = 750;
+    private static final String TAG = "Pixel2DFace";
+    private static final long MAX_ANALYSIS_AGE_MS = RecognitionEngine.MAX_FRAME_AGE_MS;
     private final ComponentActivity owner;
     private final Listener listener;
     private final ExecutorService analyzer = Executors.newSingleThreadExecutor();
+    private final ExecutorService verifier = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final CaptureSessionGate gate = new CaptureSessionGate();
-    private final FrameTimestampNormalizer timestamps = new FrameTimestampNormalizer();
     private final DetectionOrientation detectionOrientation = new DetectionOrientation();
     private final CaptureLighting lighting = new CaptureLighting();
     private final CaptureRotation rotation;
@@ -52,8 +63,13 @@ final class CameraCaptureSession {
     private volatile long rotationGeneration;
     private long lastFrameRotationGeneration = -1;
     private int lastFrameRotation = -1;
-    private final Object detectorLock = new Object();
+    // Only the analyzer uses the frame, detector and reusable sampling workspace.
+    // The verifier borrows the sampled data until its future completes.
+    private FrameTimestampNormalizer timestamps;
     private SingleFaceDetector detector;
+    private FaceFrameExtractor extractor;
+    private CompletableFuture<Void> verification;
+    private MobileFaceEmbedder embedder;
     // CameraX binding and unbinding are confined to the main thread.
     private ProcessCameraProvider provider;
     private Camera camera;
@@ -61,6 +77,8 @@ final class CameraCaptureSession {
     private Preview preview;
     private long requestedAt;
     private boolean firstImageLogged;
+    private long firstImageAt;
+    private long lastImageAt;
     private int detectedFrames;
     private long totalDetectionMs;
     private long totalEvaluationMs;
@@ -74,59 +92,69 @@ final class CameraCaptureSession {
                 if (gate.isClosing() || !rotation.update(degrees)) return;
                 rotationGeneration++;
                 if (analysis != null) analysis.setTargetRotation(rotation.surfaceRotation());
-                Log.i("Pixel2DFace", "Camera orientation targetDegrees="
+                Log.i(TAG, "Camera orientation targetDegrees="
                         + rotation.surfaceRotation() * 90);
             }
         };
     }
 
-    boolean execute(Runnable action) {
-        if (gate.isClosing()) return false;
+    @MainThread
+    void loadConfiguration(Runnable action) {
+        analyzer.execute(() -> { if (!gate.isClosing()) action.run(); });
+    }
+
+    /** Called only after configuration and, on keyguard, launch authorization. */
+    @MainThread
+    void start(PreviewView previewView, boolean neural) {
+        if (!gate.acquireFrame()) return;
+        requestedAt = SystemClock.elapsedRealtime();
+        verification = CompletableFuture.runAsync(() -> initializeVerifier(neural), verifier);
+        analyzer.execute(() -> initializeDetector(neural));
         try {
-            analyzer.execute(() -> { if (!gate.isClosing()) action.run(); });
-            return true;
-        } catch (RejectedExecutionException closed) {
-            return false;
+            bind(previewView);
+        } catch (RuntimeException failure) {
+            failCamera("Front camera initialization failed", "无法打开相机", failure);
         }
     }
 
-    /** Called on the analysis lane after configuration has been loaded. */
-    void start(PreviewView previewView) {
-        requestedAt = SystemClock.elapsedRealtime();
-        SingleFaceDetector created = FaceDetectorFactory.create(analyzer, gate::isClosing);
-        synchronized (detectorLock) {
-            if (gate.isClosing()) {
-                created.close();
-                return;
-            }
-            detector = created;
-        }
-        // Warm-up owns the same in-flight gate as a real image. Cancellation cannot close
-        // the native clients until it finishes, and no warm-up result reaches recognition.
-        if (!gate.acquireFrame()) return;
-        main.post(() -> bind(previewView));
-        long warmUpAt = SystemClock.elapsedRealtime();
+    private void initializeVerifier(boolean neural) {
+        if (gate.isClosing()) return;
         try {
-            created.warmUp().addOnCompleteListener(analyzer, task -> {
+            if (neural) embedder = new MobileFaceEmbedder(owner);
+            listener.onReady();
+        } catch (IOException | RuntimeException | LinkageError failure) {
+            failCamera("Face model initialization failed", "暂时无法识别", failure);
+        }
+    }
+
+    private void initializeDetector(boolean neural) {
+        // The placeholder owns the reader slot until both native clients finish.
+        if (gate.isClosing()) {
+            completeRead();
+            return;
+        }
+        try {
+            extractor = new FaceFrameExtractor(neural);
+            detector = FaceDetectorFactory.create(analyzer, gate::isClosing);
+            long warmUpAt = SystemClock.elapsedRealtime();
+            detector.warmUp().addOnCompleteListener(analyzer, task -> {
                 try {
-                    if (!task.isSuccessful() && !gate.isClosing()) {
-                        Log.w("Pixel2DFace", "Detector warm-up failed", task.getException());
-                        listener.onCameraError("暂时无法识别");
+                    if (!task.isSuccessful()) {
+                        failCamera("Detector warm-up failed", "暂时无法识别", task.getException());
                     }
-                    Log.i("Pixel2DFace", "Detector warm-up elapsedMs="
+                    Log.i(TAG, "Detector warm-up elapsedMs="
                             + (SystemClock.elapsedRealtime() - warmUpAt));
                 } finally {
-                    gate.completeFrame();
-                    releaseIfIdle();
+                    completeRead();
                 }
             });
         } catch (RuntimeException | LinkageError failure) {
-            gate.completeFrame();
-            releaseIfIdle();
-            throw failure;
+            try { failCamera("Detector initialization failed", "暂时无法识别", failure); }
+            finally { completeRead(); }
         }
     }
 
+    @MainThread
     private void bind(PreviewView previewView) {
         if (gate.isClosing() || owner.isFinishing() || owner.isDestroyed()) return;
         orientationListener.enable();
@@ -135,22 +163,27 @@ final class CameraCaptureSession {
             if (gate.isClosing() || owner.isFinishing() || owner.isDestroyed()) return;
             try {
                 provider = future.get();
+                CameraSelector front = CameraSelector.DEFAULT_FRONT_CAMERA;
+                Integer clockSource = Camera2CameraInfo.from(provider.getCameraInfo(front))
+                        .getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE);
+                boolean realtime = Integer.valueOf(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME)
+                        .equals(clockSource);
+                timestamps = new FrameTimestampNormalizer(realtime);
                 analysis = new ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .setTargetRotation(rotation.surfaceRotation())
                         .setTargetResolution(new Size(480, 360)).build();
                 analysis.setAnalyzer(analyzer, this::analyze);
                 if (previewView == null) {
-                    camera = provider.bindToLifecycle(owner, CameraSelector.DEFAULT_FRONT_CAMERA, analysis);
+                    camera = provider.bindToLifecycle(owner, front, analysis);
                 } else {
                     preview = new Preview.Builder().build();
                     preview.setSurfaceProvider(previewView.getSurfaceProvider());
-                    camera = provider.bindToLifecycle(owner, CameraSelector.DEFAULT_FRONT_CAMERA,
-                            analysis, preview);
+                    camera = provider.bindToLifecycle(owner, front, analysis, preview);
                 }
+                Log.d(TAG, "Camera timestamp source=" + (realtime ? "realtime" : "estimated"));
             } catch (Exception failure) {
-                Log.w("Pixel2DFace", "Front camera unavailable", failure);
-                listener.onCameraError("无法打开相机");
+                failCamera("Front camera unavailable", "无法打开相机", failure);
             }
         }, owner.getMainExecutor());
     }
@@ -163,83 +196,148 @@ final class CameraCaptureSession {
         long startedAt = SystemClock.elapsedRealtime();
         if (!firstImageLogged) {
             firstImageLogged = true;
-            Log.i("Pixel2DFace", "Camera first image startupMs=" + (startedAt - requestedAt)
+            Log.i(TAG, "Camera first image startupMs=" + (startedAt - requestedAt)
                     + " resolution=" + frame.getWidth() + "x" + frame.getHeight()
                     + " rotationDegrees=" + frame.getImageInfo().getRotationDegrees());
         }
+        boolean detecting = false;
         try {
             long capturedAt = timestamps.normalize(frame.getImageInfo().getTimestamp(), startedAt);
-            int rotation = detectionOrientation.rotationFor(frame.getImageInfo().getRotationDegrees());
-            long frameRotationGeneration = rotationGeneration;
-            if (frame.getImage() == null || capturedAt < 0) {
-                listener.onRejectedFrame("metadata");
-                complete(frame);
+            android.media.Image image = frame.getImage();
+            if (image == null || capturedAt < 0) {
+                reject("metadata");
+                return;
+            }
+            if (startedAt - capturedAt > MAX_ANALYSIS_AGE_MS) {
+                reject("frame_age");
                 return;
             }
             ImageProxy.PlaneProxy luma = frame.getPlanes()[0];
-            if (startedAt - capturedAt <= MAX_ANALYSIS_AGE_MS && lighting.needsLight(
+            if (lighting.needsLight(
                     luma.getBuffer(), frame.getWidth(), frame.getHeight(), luma.getRowStride(),
                     luma.getPixelStride(), capturedAt)) {
                 main.post(this::assistLowLight);
             }
-            if (lastFrameRotation != -1 && (rotation != lastFrameRotation
-                    || frameRotationGeneration != lastFrameRotationGeneration)) {
-                listener.onRejectedFrame("rotation_changed");
-            }
+            if (gate.isClosing()) return;
+            long frameRotationGeneration = rotationGeneration;
+            int rotation = detectionOrientation.rotationFor(frame.getImageInfo().getRotationDegrees());
+            // A changed basis clears earlier evidence, before this frame is evaluated.
+            boolean rotated = lastFrameRotation != -1 && (rotation != lastFrameRotation
+                    || frameRotationGeneration != lastFrameRotationGeneration);
             lastFrameRotation = rotation;
             lastFrameRotationGeneration = frameRotationGeneration;
-            InputImage input = InputImage.fromMediaImage(frame.getImage(), rotation);
-            SingleFaceDetector current;
-            synchronized (detectorLock) { current = detector; }
-            if (current == null || gate.isClosing()) {
-                complete(frame);
+            InputImage input = InputImage.fromMediaImage(image, rotation);
+            detector.process(input).addOnCompleteListener(analyzer, result -> onDetection(
+                    result, frame, rotation, rotated, frameRotationGeneration, startedAt, capturedAt));
+            detecting = true;
+        } catch (RuntimeException failure) {
+            Log.w(TAG, "Detector rejected a frame", failure);
+            reject("detector_error");
+        } finally {
+            if (!detecting) complete(frame);
+        }
+    }
+
+    private void onDetection(Task<List<Face>> result, ImageProxy frame, int rotation,
+            boolean rotated, long generation, long startedAt, long capturedAt) {
+        try {
+            if (gate.isClosing()) return;
+            if (!result.isSuccessful()) {
+                reject("detector_error");
                 return;
             }
-            current.process(input)
-                    .addOnSuccessListener(analyzer, faces -> {
-                        if (gate.isClosing()) return;
-                        long evaluatedAt = SystemClock.elapsedRealtime();
-                        detectedFrames++;
-                        totalDetectionMs += evaluatedAt - startedAt;
-                        String rejected = frameRotationGeneration != rotationGeneration
-                                ? "rotation_changed" : evaluatedAt - startedAt > MAX_ANALYSIS_AGE_MS
-                                ? "analysis_age" : evaluatedAt < capturedAt ? "future_timestamp"
-                                : evaluatedAt - capturedAt > MAX_ANALYSIS_AGE_MS ? "frame_age" : null;
-                        if (rejected != null) {
-                            listener.onRejectedFrame(rejected);
-                            return;
-                        }
-                        detectionOrientation.observe(faces.size(), faces.size() == 1
-                                ? faces.get(0).getHeadEulerAngleZ() : 0f);
-                        if (faces.size() == 1 && rotation != frame.getImageInfo().getRotationDegrees()) {
-                            Log.d("Pixel2DFace", "Face-oriented analysis rotationDegrees=" + rotation);
-                        }
-                        try {
-                            listener.onFrame(frame, rotation, faces, capturedAt);
-                        } catch (RuntimeException failure) {
-                            Log.w("Pixel2DFace", "Frame evaluation failed", failure);
-                            listener.onRejectedFrame("evaluation_error");
-                        } finally {
-                            totalEvaluationMs += SystemClock.elapsedRealtime() - evaluatedAt;
-                        }
-                    })
-                    .addOnFailureListener(analyzer, failure -> {
-                        if (!gate.isClosing()) listener.onRejectedFrame("detector_error");
-                    })
-                    .addOnCompleteListener(analyzer, task -> complete(frame));
+            long detectedAt = SystemClock.elapsedRealtime();
+            if (detectedFrames == 0) firstImageAt = startedAt;
+            lastImageAt = startedAt;
+            detectedFrames++;
+            totalDetectionMs += detectedAt - startedAt;
+            if (detectedAt - startedAt > MAX_ANALYSIS_AGE_MS) {
+                reject("analysis_age");
+                return;
+            }
+            // The detector has already run in parallel with the previous embedding. Wait
+            // for that verifier before reusing its sample buffer or issuing a new verdict.
+            verification.join();
+            if (gate.isClosing()) return;
+            String rejection = invalidFrameReason(generation, capturedAt);
+            if (rejection != null) {
+                verify(() -> listener.onRejectedFrame(rejection));
+                return;
+            }
+            List<Face> faces = result.getResult();
+            detectionOrientation.observe(faces.size(), faces.size() == 1
+                    ? faces.get(0).getHeadEulerAngleZ() : 0f);
+            FaceFrameExtractor.Result sample = extractor.extract(frame, rotation, faces);
+            verify(() -> evaluate(sample, rotated, generation, capturedAt, detectedAt));
         } catch (RuntimeException failure) {
-            Log.w("Pixel2DFace", "Detector rejected a frame", failure);
-            if (!gate.isClosing()) listener.onRejectedFrame("detector_error");
+            Log.w(TAG, "Frame sampling failed", failure);
+            verify(() -> listener.onRejectedFrame("evaluation_error"));
+        } finally {
             complete(frame);
+        }
+    }
+
+    private void evaluate(FaceFrameExtractor.Result frame, boolean rotated,
+            long generation, long capturedAt, long detectedAt) {
+        try {
+            if (rejectInvalidFrame(generation, capturedAt)) return;
+            if (rotated) listener.onRejectedFrame("rotation_changed");
+            if (frame.reason == FrameQualityPolicy.Reason.NONE && embedder != null) {
+                frame = frame.withTexture(embedder.embed(extractor.neuralInput));
+            }
+            if (!gate.isClosing() && !rejectInvalidFrame(generation, capturedAt)) {
+                listener.onFrame(frame, capturedAt, detectedAt);
+            }
+        } catch (RuntimeException failure) {
+            Log.w(TAG, "Frame evaluation failed", failure);
+            if (!gate.isClosing()) listener.onRejectedFrame("evaluation_error");
+        } catch (LinkageError failure) {
+            failCamera("Face model inference failed", "暂时无法识别", failure);
+        } finally {
+            totalEvaluationMs += SystemClock.elapsedRealtime() - detectedAt;
+        }
+    }
+
+    private boolean rejectInvalidFrame(long generation, long capturedAt) {
+        String reason = invalidFrameReason(generation, capturedAt);
+        if (reason == null) return false;
+        listener.onRejectedFrame(reason);
+        return true;
+    }
+
+    private String invalidFrameReason(long generation, long capturedAt) {
+        if (generation != rotationGeneration) return "rotation_changed";
+        return SystemClock.elapsedRealtime() - capturedAt > MAX_ANALYSIS_AGE_MS ? "frame_age" : null;
+    }
+
+    private void reject(String reason) {
+        // Rejected frames clear evidence in the same order as evaluated frames.
+        verification.join();
+        verify(() -> listener.onRejectedFrame(reason));
+    }
+
+    private void verify(Runnable action) {
+        if (!gate.isClosing()) {
+            verification = CompletableFuture.runAsync(() -> {
+                if (!gate.isClosing()) action.run();
+            }, verifier);
         }
     }
 
     private void complete(ImageProxy frame) {
         try { frame.close(); }
-        finally {
-            gate.completeFrame();
-            releaseIfIdle();
-        }
+        finally { completeRead(); }
+    }
+
+    private void completeRead() {
+        gate.completeFrame();
+        releaseIfIdle();
+    }
+
+    private void failCamera(String diagnostic, String message, Throwable failure) {
+        if (!gate.requestClose()) return;
+        Log.w(TAG, diagnostic, failure);
+        listener.onCameraError(message);
     }
 
     private void assistLowLight() {
@@ -252,33 +350,29 @@ final class CameraCaptureSession {
         ListenableFuture<Integer> applied = camera.getCameraControl().setExposureCompensationIndex(target);
         applied.addListener(() -> {
             try {
-                Log.i("Pixel2DFace", "Low-light exposure applied index=" + applied.get());
+                Log.i(TAG, "Low-light exposure applied index=" + applied.get());
             } catch (Exception failure) {
-                if (!gate.isClosing()) Log.w("Pixel2DFace", "Low-light exposure unavailable", failure);
+                if (!gate.isClosing()) Log.w(TAG, "Low-light exposure unavailable", failure);
             }
         }, owner.getMainExecutor());
     }
 
     /** Idempotent. The detector stays alive until its outstanding task closes its frame. */
+    @MainThread
     void close() {
         gate.requestClose();
-        if (Looper.myLooper() == Looper.getMainLooper()) unbind();
-        else main.post(this::unbind);
-        releaseIfIdle();
-    }
-
-    private void unbind() {
         orientationListener.disable();
         camera = null;
         if (analysis != null) {
             analysis.clearAnalyzer();
-            if (provider != null) provider.unbind(analysis);
+            provider.unbind(analysis);
             analysis = null;
         }
         if (preview != null) {
-            if (provider != null) provider.unbind(preview);
+            provider.unbind(preview);
             preview = null;
         }
+        releaseIfIdle();
     }
 
     private void releaseIfIdle() {
@@ -290,22 +384,32 @@ final class CameraCaptureSession {
     }
 
     private void releaseDetector() {
-        if (detectedFrames > 0) {
-            Log.i("Pixel2DFace", "Camera analysis frames=" + detectedFrames
-                    + " detectionMeanMs=" + totalDetectionMs / detectedFrames
-                    + " evaluationMeanMs=" + totalEvaluationMs / detectedFrames);
-        }
-        SingleFaceDetector released;
-        synchronized (detectorLock) {
-            released = detector;
+        try {
+            if (detector != null) detector.close();
+        } catch (RuntimeException failure) {
+            Log.w(TAG, "Detector close failed", failure);
+        } finally {
             detector = null;
+            verification = null;
+            verifier.execute(this::releaseVerifier);
+            verifier.shutdown();
+        }
+    }
+
+    private void releaseVerifier() {
+        if (detectedFrames > 0) {
+            Log.i(TAG, "Camera analysis frames=" + detectedFrames
+                    + " detectionMeanMs=" + totalDetectionMs / detectedFrames
+                    + " evaluationMeanMs=" + totalEvaluationMs / detectedFrames
+                    + " frameIntervalMeanMs=" + (detectedFrames < 2 ? 0
+                            : (lastImageAt - firstImageAt) / (detectedFrames - 1)));
         }
         try {
-            if (released != null) released.close();
-        } catch (RuntimeException failure) {
-            Log.w("Pixel2DFace", "Detector close failed", failure);
+            if (embedder != null) embedder.close();
         } finally {
-            listener.onClosed();
+            embedder = null;
+            if (extractor != null) extractor.clear();
+            extractor = null;
         }
     }
 }

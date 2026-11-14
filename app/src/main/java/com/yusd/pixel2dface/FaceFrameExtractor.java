@@ -6,20 +6,25 @@ import androidx.camera.core.ImageProxy;
 import com.google.mlkit.vision.face.Face;
 import com.google.mlkit.vision.face.FaceContour;
 import com.google.mlkit.vision.face.FaceLandmark;
+import java.nio.ByteBuffer;
 import java.util.List;
 
-/** Adapts ML Kit and CameraX measurements into the Android-independent recognition core. */
-final class FaceFrameExtractor implements AutoCloseable {
-    private final LbpDescriptor.Workspace workspace = new LbpDescriptor.Workspace();
-    private final AlignedRgbSampler rgb = new AlignedRgbSampler();
-    private MobileFaceEmbedder embedder;
+/** Extracts measurements and samples pixels while CameraX still owns the frame. */
+final class FaceFrameExtractor {
+    private final LbpDescriptor.Workspace workspace;
+    private final AlignedRgbSampler rgb;
+    final ByteBuffer neuralInput;
 
-    void initialize(android.content.Context context, boolean neural) throws java.io.IOException {
-        if (neural) embedder = new MobileFaceEmbedder(context);
+    FaceFrameExtractor(boolean neural) {
+        workspace = neural ? null : new LbpDescriptor.Workspace();
+        rgb = neural ? new AlignedRgbSampler() : null;
+        neuralInput = neural ? MobileFaceEmbedder.allocateInput() : null;
     }
 
-    @Override public void close() {
-        if (embedder != null) { embedder.close(); embedder = null; }
+    void clear() {
+        if (neuralInput == null) return;
+        neuralInput.clear();
+        while (neuralInput.hasRemaining()) neuralInput.putFloat(0f);
     }
 
     Result extract(ImageProxy frame, int rotation, List<Face> faces) {
@@ -66,7 +71,7 @@ final class FaceFrameExtractor implements AutoCloseable {
                 mouthRight.x, mouthRight.y, mouthBottom.x, mouthBottom.y);
         if (geometry == null) return new Result(FrameQualityPolicy.Reason.INVALID_DESCRIPTOR,
                 sample, null, null);
-        if (embedder != null) {
+        if (neuralInput != null) {
             PointF firstEye = left.x < right.x ? left : right;
             PointF secondEye = left.x < right.x ? right : left;
             PointF firstMouth = mouthLeft.x < mouthRight.x ? mouthLeft : mouthRight;
@@ -80,15 +85,13 @@ final class FaceFrameExtractor implements AutoCloseable {
             if (!rgb.sample(planes[0].getBuffer(), planes[0].getRowStride(), planes[0].getPixelStride(),
                     planes[1].getBuffer(), planes[1].getRowStride(), planes[1].getPixelStride(),
                     planes[2].getBuffer(), planes[2].getRowStride(), planes[2].getPixelStride(),
-                    frame.getWidth(), frame.getHeight(), rotation, alignment, embedder.input)) {
+                    frame.getWidth(), frame.getHeight(), rotation, alignment, neuralInput)) {
                 return new Result(FrameQualityPolicy.Reason.INVALID_DESCRIPTOR, sample, null, null);
             }
             sample = new FrameQualityPolicy.Sample(1, leftProbability, rightProbability,
                     leftContour, rightContour, sample.yaw, sample.pitch, sample.roll, size,
                     offsetX, offsetY, rgb.brightness, rgb.contrast, rgb.sharpness);
-            FrameQualityPolicy.Reason reason = FrameQualityPolicy.problem(sample);
-            return new Result(reason, sample, reason == FrameQualityPolicy.Reason.NONE
-                    ? embedder.embed() : null, geometry);
+            return new Result(FrameQualityPolicy.problem(sample), sample, null, geometry);
         }
         float[] texture = workspace.compute(frame, rotation, crop, left, right);
         sample = new FrameQualityPolicy.Sample(1, leftProbability, rightProbability,
@@ -148,6 +151,7 @@ final class FaceFrameExtractor implements AutoCloseable {
             this.reason = reason; this.sample = sample;
             this.texture = texture; this.geometry = geometry;
         }
+        Result withTexture(float[] texture) { return new Result(reason, sample, texture, geometry); }
         static Result reject(FrameQualityPolicy.Reason reason) {
             return new Result(reason, null, null, null);
         }

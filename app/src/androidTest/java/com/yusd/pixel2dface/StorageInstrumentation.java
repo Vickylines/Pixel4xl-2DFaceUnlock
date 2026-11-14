@@ -59,7 +59,7 @@ public final class StorageInstrumentation extends Instrumentation {
                 return;
             }
             if (capturePipeline) {
-                CapturePipelineChecks.run(getContext(), result);
+                CapturePipelineChecks.run(getContext(), getTargetContext(), result);
                 result.putString("result", "PASS");
                 finish(Activity.RESULT_OK, result);
                 return;

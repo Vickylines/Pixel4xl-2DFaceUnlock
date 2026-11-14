@@ -17,13 +17,17 @@ import com.google.mlkit.vision.face.FaceDetection;
 import com.google.mlkit.vision.face.FaceDetector;
 import com.google.mlkit.vision.face.FaceLandmark;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 /** Native pipeline comparison using a public-domain fixture, never the device enrollment. */
 final class CapturePipelineChecks {
-    static void run(Context testContext, Bundle result) throws Exception {
+    static void run(Context testContext, Context targetContext, Bundle result) throws Exception {
         Bitmap source;
         try (InputStream stream = testContext.getAssets().open("astronaut.png")) {
             source = BitmapFactory.decodeStream(stream);
@@ -115,7 +119,7 @@ final class CapturePipelineChecks {
                 Bitmap raw = Bitmap.createBitmap(crowd, 0, 0, 960, 640, rotate, false);
                 List<Face> faces = await(joined.process(InputImage.fromBitmap(raw, correction)));
                 require(faces.size() == 2, "reject two faces " + correction);
-                require(new FaceFrameExtractor().extract(null, correction, faces).reason
+                require(new FaceFrameExtractor(false).extract(null, correction, faces).reason
                         == FrameQualityPolicy.Reason.MULTIPLE_FACES, "multiple-face gate");
                 if (raw != crowd) raw.recycle();
             }
@@ -125,6 +129,7 @@ final class CapturePipelineChecks {
             result.putInt("multipleFaceOrientationsRejected", 4);
             result.putInt("comparedDetectorFrames", 28);
             result.putInt("detectorOutputMismatches", 0);
+            compareVerification(targetContext, joined, image, portrait, upright, result);
         } finally { portrait.recycle(); }
         String[] names = {"sequential", "parallel"};
         for (int lane = 0; lane < 2; lane++) {
@@ -132,6 +137,73 @@ final class CapturePipelineChecks {
             result.putLong(names[lane] + "DetectorMedianUs", times[lane][12] / 1000);
             result.putLong(names[lane] + "DetectorP95Us", times[lane][22] / 1000);
         }
+    }
+
+    private static void compareVerification(Context context, SingleFaceDetector detector,
+            InputImage image, Bitmap portrait, Face face, Bundle result) throws Exception {
+        android.graphics.Rect box = face.getBoundingBox();
+        Bitmap crop = Bitmap.createBitmap(portrait, box.left, box.top, box.width(), box.height());
+        Bitmap aligned = Bitmap.createScaledBitmap(crop, 112, 112, false);
+        int[] pixels = new int[112 * 112];
+        aligned.getPixels(pixels, 0, 112, 0, 0, 112, 112);
+        if (aligned != crop) aligned.recycle();
+        if (crop != portrait) crop.recycle();
+        ByteBuffer input = MobileFaceEmbedder.allocateInput();
+        ExecutorService verifier = Executors.newSingleThreadExecutor();
+        long[][] times = new long[2][12];
+        try {
+            MobileFaceEmbedder model = verifier.submit(() -> new MobileFaceEmbedder(context))
+                    .get(10, TimeUnit.SECONDS);
+            try {
+                for (int round = -2; round < times[0].length; round++) {
+                    float[][][] results = new float[2][][];
+                    for (int step = 0; step < 2; step++) {
+                        int lane = (round + 2 + step) % 2;
+                        long start = SystemClock.elapsedRealtimeNanos();
+                        results[lane] = verifyFiveFrames(detector, image, pixels, input, model,
+                                verifier, lane == 1);
+                        if (round >= 0) times[lane][round] = SystemClock.elapsedRealtimeNanos() - start;
+                    }
+                    require(Arrays.deepEquals(results[0], results[1]),
+                            "overlap changed the order or contents of the embeddings");
+                    require(!Arrays.equals(results[1][0], results[1][4]),
+                            "two distinct inputs must produce different embeddings");
+                }
+            } finally {
+                verifier.submit(model::close).get(10, TimeUnit.SECONDS);
+            }
+        } finally { verifier.shutdown(); }
+        String[] names = {"serialFiveFrames", "pipelinedFiveFrames"};
+        for (int lane = 0; lane < 2; lane++) {
+            Arrays.sort(times[lane]);
+            result.putLong(names[lane] + "MedianUs",
+                    (times[lane][5] + times[lane][6]) / 2000);
+        }
+        result.putInt("comparedPipelinedEmbeddings", 5 * (times[0].length + 2));
+    }
+
+    private static float[][] verifyFiveFrames(SingleFaceDetector detector, InputImage image,
+            int[] pixels, ByteBuffer input, MobileFaceEmbedder model, ExecutorService verifier,
+            boolean overlap) throws Exception {
+        float[][] vectors = new float[5][];
+        Future<float[]> previous = null;
+        for (int frame = 0; frame < vectors.length; frame++) {
+            require(await(detector.process(image)).size() == 1, "single face benchmark frame");
+            if (previous != null) vectors[frame - 1] = previous.get(10, TimeUnit.SECONDS);
+            input.clear();
+            for (int pixel : pixels) {
+                for (int shift = 16; shift >= 0; shift -= 8) {
+                    int value = Math.min(255, ((pixel >> shift) & 0xff) + 10 * frame);
+                    input.putFloat((value - 127.5f) / 128f);
+                }
+            }
+            input.flip();
+            Future<float[]> current = verifier.submit(() -> model.embed(input));
+            if (overlap) previous = current;
+            else vectors[frame] = current.get(10, TimeUnit.SECONDS);
+        }
+        if (previous != null) vectors[vectors.length - 1] = previous.get(10, TimeUnit.SECONDS);
+        return vectors;
     }
 
     private static List<Face> await(Task<List<Face>> task) throws Exception {

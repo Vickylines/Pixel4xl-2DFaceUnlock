@@ -18,8 +18,7 @@ import org.tensorflow.lite.Interpreter;
 /** On-device comparison against the 0.13.2 loader, using synthetic pixels and no enrollment. */
 final class InferenceBenchmark {
     static void run(Context context, Bundle result) throws Exception {
-        ByteBuffer input = ByteBuffer.allocateDirect(112 * 112 * 3 * Float.BYTES)
-                .order(ByteOrder.nativeOrder());
+        ByteBuffer input = MobileFaceEmbedder.allocateInput();
         float[][] output = new float[2][EmbeddingIdentity.DIMENSIONS];
         long[][] init = new long[2][10];
         long[][] inference = new long[2][40];
@@ -48,17 +47,13 @@ final class InferenceBenchmark {
                 MobileFaceEmbedder model = new MobileFaceEmbedder(context)) {
             for (int round = -4; round < 40; round++) {
                 fill(input, round + 4);
-                ByteBuffer single = input.duplicate();
-                single.limit(model.input.capacity());
-                model.input.clear();
-                model.input.put(single).flip();
                 float[] actual = null;
                 for (int offset = 0; offset < 2; offset++) {
                     int lane = (round + 4 + offset) % 2;
                     input.rewind();
                     long start = SystemClock.elapsedRealtimeNanos();
                     if (lane == 0) old.run(input, output);
-                    else actual = model.embed();
+                    else actual = model.embed(input);
                     if (round >= 0) inference[lane][round] = SystemClock.elapsedRealtimeNanos() - start;
                 }
                 if (!Arrays.equals(EmbeddingIdentity.normalize(output[0]), actual)) mismatches++;

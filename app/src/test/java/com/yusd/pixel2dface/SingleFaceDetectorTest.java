@@ -50,7 +50,7 @@ public final class SingleFaceDetectorTest {
         detail.result.setResult(List.of(face(0)));
         assertSame(faces, task.getResult());
         assertEquals(FrameQualityPolicy.Reason.MULTIPLE_FACES,
-                new FaceFrameExtractor().extract(null, 0, task.getResult()).reason);
+                new FaceFrameExtractor(false).extract(null, 0, task.getResult()).reason);
     }
 
     @Test public void noFaceCannotBeOverriddenByTheContourReader() {
@@ -60,7 +60,7 @@ public final class SingleFaceDetectorTest {
         detail.result.setResult(List.of(face(0)));
         assertTrue(task.getResult().isEmpty());
         assertEquals(FrameQualityPolicy.Reason.NO_FACE,
-                new FaceFrameExtractor().extract(null, 0, task.getResult()).reason);
+                new FaceFrameExtractor(false).extract(null, 0, task.getResult()).reason);
     }
 
     @Test public void oneFaceWaitsForDetailsFromTheSameImage() {

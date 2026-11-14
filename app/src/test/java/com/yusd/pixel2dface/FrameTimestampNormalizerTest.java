@@ -4,6 +4,21 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public final class FrameTimestampNormalizerTest {
+    @Test public void realtimeClockPreservesTheAgeOfTheFirstFrame() {
+        FrameTimestampNormalizer clock = new FrameTimestampNormalizer(true);
+        assertEquals(1000L, clock.normalize(1_000_000_000L, 1550L));
+        assertEquals(1033L, clock.normalize(1_033_000_000L, 1565L));
+    }
+
+    @Test public void realtimeClockRejectsFutureFramesAndRepeatedMilliseconds() {
+        FrameTimestampNormalizer clock = new FrameTimestampNormalizer(true);
+        assertEquals(-1L, clock.normalize(1_001_000_000L, 1000L));
+        assertEquals(1000L, clock.normalize(1_000_000_000L, 1000L));
+        assertEquals(-1L, clock.normalize(1_000_800_000L, 1001L));
+        assertEquals(-1L, clock.normalize(1_000_700_000L, 1001L));
+        assertEquals(1001L, clock.normalize(1_001_000_000L, 1001L));
+    }
+
     @Test public void cameraEpochDoesNotNeedToEqualSystemEpoch() {
         FrameTimestampNormalizer clock = new FrameTimestampNormalizer();
         assertEquals(1500L, clock.normalize(8_000_000_000L, 1500));

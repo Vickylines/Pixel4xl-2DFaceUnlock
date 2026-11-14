@@ -14,7 +14,11 @@ final class CaptureSessionGate {
 
     synchronized void completeFrame() { inFlight = false; }
 
-    synchronized void requestClose() { closing = true; }
+    synchronized boolean requestClose() {
+        if (closing) return false;
+        closing = true;
+        return true;
+    }
 
     synchronized boolean isClosing() { return closing; }
 

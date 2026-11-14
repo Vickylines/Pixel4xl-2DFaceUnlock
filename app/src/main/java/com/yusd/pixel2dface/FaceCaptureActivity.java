@@ -17,10 +17,7 @@ import android.view.WindowManager;
 import androidx.activity.ComponentActivity;
 import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
-import androidx.camera.core.ImageProxy;
 import androidx.core.view.WindowCompat;
-import com.google.mlkit.vision.face.Face;
-import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -35,14 +32,13 @@ public class FaceCaptureActivity extends ComponentActivity {
     private final DeviceCredentialConfirmation credentials = new DeviceCredentialConfirmation(this);
     private final Map<String, Integer> frameOutcomes = new LinkedHashMap<>();
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final FaceFrameExtractor extractor = new FaceFrameExtractor();
     private final EmbeddingEnrollment enrollment = new EmbeddingEnrollment();
     private final PassiveUnlockFailurePolicy passiveFailure = new PassiveUnlockFailurePolicy();
     private CameraCaptureSession camera;
     private CaptureContentView content;
     private UnlockCameraHost host;
     private RecognitionEngine recognition;
-    private TemplateStore.RecognitionSettings settings;
+    private volatile TemplateStore.RecognitionSettings settings;
     private String mode;
     private String sessionToken;
     private long generation;
@@ -52,6 +48,7 @@ public class FaceCaptureActivity extends ComponentActivity {
     private long firstFaceAt;
     private long firstQualityAt;
     private long firstMatchAt;
+    private long confirmedAt;
     private long lastUiUpdateAt;
     private long lastDiagnosticAt;
     private int processedFrames;
@@ -148,8 +145,15 @@ public class FaceCaptureActivity extends ComponentActivity {
         if (initialized || finished.get()) return;
         initialized = true;
         camera = new CameraCaptureSession(this, new CameraCaptureSession.Listener() {
-            @Override public void onFrame(ImageProxy image, int rotation, List<Face> faces,
-                    long capturedAtMs) { processFrame(image, rotation, faces, capturedAtMs); }
+            @Override public void onReady() {
+                engineReadyAt = SystemClock.elapsedRealtime();
+                android.util.Log.i("Pixel2DFace", "Capture engine ready mode=" + mode
+                        + " initMs=" + (engineReadyAt - createdAt));
+            }
+            @Override public void onFrame(FaceFrameExtractor.Result frame,
+                    long capturedAtMs, long detectedAtMs) {
+                processFrame(frame, capturedAtMs, detectedAtMs);
+            }
             @Override public void onRejectedFrame(String reason) {
                 if (finished.get()) return;
                 recordFrameOutcome("camera_" + reason);
@@ -157,7 +161,6 @@ public class FaceCaptureActivity extends ComponentActivity {
                 if (recognition != null) { recognition.clear(); showProgress(0); }
                 showDetail("拿稳手机");
             }
-            @Override public void onClosed() { extractor.close(); }
             @Override public void onCameraError(String message) { finishFailure(false, message); }
             @Override public void onLowLight() {
                 if (isUnlock() && !finished.get()) sendBroadcast(new Intent(Constants.ACTION_LOW_LIGHT)
@@ -168,7 +171,7 @@ public class FaceCaptureActivity extends ComponentActivity {
         // Include initialization in the deadline so a stalled provider cannot leave a host alive.
         main.postDelayed(() -> finishFailure(isUnlock(), isEnrollment() ? "录入超时" : "识别超时"),
                 isEnrollment() ? ENROLLMENT_TIMEOUT_MS : RECOGNITION_TIMEOUT_MS);
-        camera.execute(() -> {
+        camera.loadConfiguration(() -> {
             try {
                 if (!isEnrollment()) {
                     settings = isUnlock()
@@ -197,22 +200,8 @@ public class FaceCaptureActivity extends ComponentActivity {
                         host.attach();
                         android.util.Log.i("Pixel2DFace", "Capture host attached");
                     }
-                    camera.execute(() -> {
-                        try {
-                            // Authorization and host readiness are complete. Camera opening and
-                            // native detector loading can overlap model setup; every real frame
-                            // queues behind this initializer on the same serial analysis lane.
-                            camera.start(content == null ? null : content.preview);
-                            extractor.initialize(this,
-                                    isEnrollment() || settings.model instanceof EmbeddingIdentity);
-                            engineReadyAt = SystemClock.elapsedRealtime();
-                            android.util.Log.i("Pixel2DFace", "Capture engine ready mode=" + mode
-                                    + " initMs=" + (engineReadyAt - createdAt));
-                        } catch (Exception | LinkageError failure) {
-                            android.util.Log.w("Pixel2DFace", "Capture initialization failed", failure);
-                            finishFailure(false, "暂时无法识别");
-                        }
-                    });
+                    camera.start(content == null ? null : content.preview,
+                            isEnrollment() || settings.model instanceof EmbeddingIdentity);
                 });
             } catch (Exception | LinkageError failure) {
                 android.util.Log.w("Pixel2DFace", "Capture initialization failed", failure);
@@ -221,14 +210,13 @@ public class FaceCaptureActivity extends ComponentActivity {
         });
     }
 
-    private void processFrame(ImageProxy image, int rotation, List<Face> faces, long capturedAt) {
+    private void processFrame(FaceFrameExtractor.Result frame, long capturedAt, long detectedAt) {
         if (finished.get()) return;
-        if (firstFrameAt == 0) firstFrameAt = SystemClock.elapsedRealtime();
-        if (firstFaceAt == 0 && faces != null && !faces.isEmpty()) {
-            firstFaceAt = SystemClock.elapsedRealtime();
+        if (firstFrameAt == 0) firstFrameAt = detectedAt;
+        if (firstFaceAt == 0 && frame.reason != FrameQualityPolicy.Reason.NO_FACE) {
+            firstFaceAt = detectedAt;
         }
         processedFrames++;
-        FaceFrameExtractor.Result frame = extractor.extract(image, rotation, faces);
         if (isUnlock() && passiveFailure.shouldStop(frame.reason, capturedAt)) {
             recordFrameOutcome("CLOSED_EYES_STOP");
             finishFailure(true, "请用锁屏密码");
@@ -285,6 +273,8 @@ public class FaceCaptureActivity extends ComponentActivity {
     private void finishSuccess(float score, boolean fastPath) {
         // Cancellation and success must choose one outcome before changing failure counters.
         if (!finished.compareAndSet(false, true)) return;
+        confirmedAt = SystemClock.elapsedRealtime();
+        main.post(this::closeCamera);
         if (!isUnlock()) {
             publishSuccess(score, fastPath);
             return;
@@ -310,7 +300,7 @@ public class FaceCaptureActivity extends ComponentActivity {
                 + " firstFaceMs=" + sinceCreation(firstFaceAt)
                 + " firstQualityMs=" + sinceCreation(firstQualityAt)
                 + " firstMatchMs=" + sinceCreation(firstMatchAt)
-                + " confirmationMs=" + (firstMatchAt == 0 ? -1 : now - firstMatchAt)
+                + " confirmationMs=" + (firstMatchAt == 0 ? -1 : confirmedAt - firstMatchAt)
                 + " frames=" + processedFrames);
         main.post(() -> {
             stopCapture();
@@ -365,6 +355,10 @@ public class FaceCaptureActivity extends ComponentActivity {
     private void stopCapture() {
         main.removeCallbacksAndMessages(null);
         if (recognition != null) recognition.endSession();
+        closeCamera();
+    }
+
+    private void closeCamera() {
         if (camera != null) camera.close();
     }
     private void finishHost() {
