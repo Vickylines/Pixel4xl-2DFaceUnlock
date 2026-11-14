@@ -20,9 +20,9 @@ public final class UnlockFaceAnimationView extends View {
     public static final int STYLE_FACE_ID = AnimationStyle.FACE;
     public static final int STYLE_DYNAMIC_ISLAND = AnimationStyle.ISLAND;
 
-    private static final int SEARCHING = 0;
-    private static final int SUCCESS = 1;
-    private static final int FAILURE = 2;
+    static final int SEARCHING = 0;
+    static final int SUCCESS = 1;
+    static final int FAILURE = 2;
     private static final long SUCCESS_MORPH_MS = 680L;
     private static final long FAILURE_MORPH_MS = 580L;
 
@@ -148,15 +148,16 @@ public final class UnlockFaceAnimationView extends View {
             return;
         }
         resumeTicker();
-        setAlpha(0f);
-        float initialScale = 0.94f;
+        boolean portraitStyle = visualStyle >= AnimationStyle.GLOW;
+        setAlpha(portraitStyle ? .76f : 0f);
+        float initialScale = portraitStyle ? .97f : .94f;
         setScaleX(initialScale);
         setScaleY(initialScale);
         animate()
                 .alpha(1f)
                 .scaleX(1f)
                 .scaleY(1f)
-                .setDuration(240L)
+                .setDuration(portraitStyle ? 160L : 240L)
                 .setInterpolator(new PathInterpolator(0.22f, 1f, 0.36f, 1f))
                 .start();
     }
