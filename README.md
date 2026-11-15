@@ -1,111 +1,74 @@
-# 2D人脸解锁
+# 2D 人脸解锁 (Pixel4xl-2DFaceUnlock)
 
 [![Android CI](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/actions/workflows/android.yml/badge.svg)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/actions/workflows/android.yml)
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel4xl-2DFaceUnlock)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **[0.13.14 正式版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.13.14)**重做四种锁屏动效，以圆角线条呈现面容，成功时嘴部线条连续变成勾。原「点阵」更新为「聚焦」。 [更新说明](dist/RELEASE-NOTES-0.13.14.md)
+基于 LSPosed 的轻量级纯离线 2D 人脸解锁模块，专为 Android 10–17 类原生系统（AOSP / Pixel / LineageOS 等）设计。
 
-通用构建面向已 Root、已安装 LSPosed 且具备兼容 SystemUI 接口的 Android 10–17 设备。同一 APK 包含 ARM32、ARM64、x86 和 x86_64。
+为没有官方 2D 人脸识别或刷了类原生系统的设备提供原生般流畅、无感的锁屏人脸解锁体验。
 
-识别使用离线 MobileFaceNet 与 v4 模板，已有 v3 模板继续使用纹理与几何双信号后端。相机、识别、存储与 SystemUI 会话分开管理；识别与一次性授权、系统弱认证策略及锁屏退出分别复核。适配范围见 [兼容性矩阵](COMPATIBILITY.md)。
+---
 
-设计见 [架构说明](ARCHITECTURE.md)，模型来源与授权见 [模型信息](app/src/main/assets/models/provenance.json)。
+## 核心特性
 
-> 本项目不是 Google、LineageOS、Magisk 或 LSPosed 的官方项目。普通 RGB 2D 人脸可能被照片或视频绕过，只适合便利解锁。
+- **极速响应**：相机秒开、模型预热与并行识别优化，亮屏即识，流畅上滑进入桌面。
+- **原生级锁屏融合**：将动效与状态无缝注入原生 SystemUI 锁屏，支持多种锁屏微动效（聚焦、面容轮廓等）。
+- **纯本地离线**：基于本地 MobileFaceNet 神经网络推理，应用不申请任何网络权限，不保存原始照片，纯本地特征比对。
+- **全架构支持**：单个 APK 覆盖 `arm64-v8a`、`armeabi-v7a`、`x86` 及 `x86_64`，适配 16KB 页对齐。
+- **规范安全回退**：仅用于日常锁屏便利解锁；重启后首次解锁、锁定模式或系统强认证超时，均严格遵循系统策略回退 PIN/密码。
 
-## 下载
+---
 
-- [下载 0.13.14 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.14/Pixel2DFaceUnlock-universal-0.13.14-motion.apk) · [安装说明](dist/INSTALL-ZH-0.13.14.txt) · [SHA-256](dist/SHA256SUMS-0.13.14.txt)
+## 快速上手
 
-- [下载 0.13.13 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.13/Pixel2DFaceUnlock-universal-0.13.13-motion.apk) · [安装说明](dist/INSTALL-ZH-0.13.13.txt) · [SHA-256](dist/SHA256SUMS-0.13.13.txt)
+> **前置条件**：设备已 Root，并安装支持当前系统的 LSPosed 框架。
 
-- [下载 0.13.8 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.8/Pixel2DFaceUnlock-universal-0.13.8.apk) · [安装说明](dist/INSTALL-ZH-0.13.8.txt) · [SHA-256](dist/SHA256SUMS-0.13.8.txt)
+1. **安装模块**：前往 [Releases 页面](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases) 下载最新的 `Pixel2DFaceUnlock-universal-*.apk` 并安装；
+2. **启用作用域**：在 LSPosed 管理器中启用本模块，作用域**仅需勾选「系统界面 (com.android.systemui)」**；
+3. **重启生效**：重启手机或重启 SystemUI（重启后的第一次解锁需手动输入一次锁屏密码）；
+4. **录入面容**：打开「2D 人脸解锁」应用，按照界面提示自然看向屏幕完成面容录入即可。
 
-- [下载 0.13.7 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.7/Pixel2DFaceUnlock-universal-0.13.7.apk) · [安装说明](dist/INSTALL-ZH-0.13.7.txt) · [SHA-256](dist/SHA256SUMS-0.13.7.txt)
+---
 
-- [下载 0.13.4 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.4/Pixel2DFaceUnlock-universal-0.13.4.apk) · [安装说明](dist/INSTALL-ZH-0.13.4.txt) · [SHA-256](dist/SHA256SUMS-0.13.4.txt)
+## 解锁交互逻辑
 
-日常使用安装正式模块即可。[0.13.4 独立诊断包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.4/Pixel2DFaceUnlock-0.13.4-validation.apk)用于开发测试和故障排查，使用独立数据目录，不接入 LSPosed 锁屏解锁。
+- **普通锁屏界面**：亮屏后自动识别人脸，通过后原生锁图标展开为解锁状态，上滑即可直接进入桌面。
+- **密码/PIN 界面**：若已滑动到密码输入界面，人脸识别成功后会自动直接进入系统。
+- **安全保障机制**：设备重启首次开机、连续识别人脸失败、系统弱生物识别超时，均要求输入 PIN/密码。
 
-- [下载 0.13.3 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.3/Pixel2DFaceUnlock-universal-0.13.3.apk) · [独立诊断包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.3/Pixel2DFaceUnlock-0.13.3-validation.apk) · [安装说明](dist/INSTALL-ZH-0.13.3.txt) · [SHA-256](dist/SHA256SUMS-0.13.3.txt)
+---
 
-- [下载 0.13.2 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.2/Pixel2DFaceUnlock-universal-0.13.2.apk) · [独立诊断包](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.2/Pixel2DFaceUnlock-0.13.2-validation.apk) · [安装说明](dist/INSTALL-ZH-0.13.2.txt) · [SHA-256](dist/SHA256SUMS-0.13.2.txt)
+## 兼容性
 
-## 适配边界
+- **支持系统**：Android 10 – Android 17 (API 29–37)。
+- **推荐 ROM**：Google Pixel 原生系统、LineageOS、Evolution X 等 AOSP / 类原生 ROM。
+- **限制说明**：暂未对 MIUI / HyperOS、One UI、ColorOS 等深度定制的厂商 ROM 进行针对性适配。
+- 更多详细适配及测试记录请参阅 [兼容性文档](COMPATIBILITY.md)。
 
-- 目标设备：带前置摄像头、已 Root 且安装 LSPosed 的设备，不限制品牌。
-- CPU：`armeabi-v7a`、`arm64-v8a`、`x86`、`x86_64`，单 APK 覆盖；64 位原生库及 APK 对齐已检查 16 KB 页兼容。
-- 目标系统：Android 10–17（API 29–37）。
-- 优先 ROM：Pixel 原生系统以及 AOSP/LineageOS 类 SystemUI。
-- LSPosed 作用域：只勾选 `com.android.systemui`（系统界面）。
+---
 
-保留版本在 Pixel 4 XL / LineageOS 24.0 / Android 17 上的验证记录见各版发布说明。其他 Android 版本与厂商 ROM 的状态见兼容性矩阵；关键认证接口不兼容时保持锁定。访客／辅助用户、Android 9 及更早版本、Android 18 及后续版本不在当前适配范围。
+## 安全须知
 
-详细状态见 [COMPATIBILITY.md](COMPATIBILITY.md)。
+1. 本模块基于普通前置 RGB 摄像头实现 2D 特征比对，**不具备** Pixel 4 XL 官方红外雷达/深度硬件或 Class 3 生物级别的防伪能力。
+2. 仅作为日常日常便捷解锁使用，请勿用于高价值或高安全级别场景（支付认证请继续使用指纹或密码）。
+3. 模块完全离线运行，无任何网络请求，面容特征严格加密保存在应用私有沙盒中。
 
-## 0.13.8 解锁提速
+---
 
-模型对同一张脸的主体计算从两次减为一次，保留原始末端运算；亮屏后按系统实际就绪状态启动，省去固定等待。Pixel 4 XL 同机前后各测 8 轮，亮屏到认证完成的中位数由 1.176 秒降至 0.968 秒，进入桌面由 1.818 秒降至 1.595 秒，两组均一次上滑成功 8/8。模型推理中位数由 39.9 毫秒降至 19.3 毫秒，136 组输出逐位一致。身份阈值、睁眼和连续确认要求保持原值，详见 [性能实测记录](docs/performance-0.13.8.md)。
+## 编译
 
-## 0.13.3 启动提速
-
-相机开启、检测器预热和模型初始化重叠进行，后续会话复用已校验的只读模型权重。Pixel 4 XL 上重复初始化中位数从 28 ms 降至 8 ms，44 组输入的识别向量与旧路径逐项一致。241 项回归检查、329 项真机断言及关屏复测通过。用户确认三次正常识别均能进入桌面且体感更快，识别耗时中位数 1.13 秒。身份阈值、睁眼、多人拒绝、连续帧和系统认证要求保持不变，详见 [性能验证记录](dist/PERFORMANCE-0.13.3-20261109.md)。
-
-## 0.13.2 全量检查
-
-逐文件检查 54 个生产 Java 源文件及清单、资源、构建和维护脚本。修复损坏数据页反复录入却无法保存的问题，恢复入口改为先确认删除并验证系统密码，再重新录入；眼睛轮廓改为沿双眼方向测量，避免歪头被计入开合高度。
-
-238 项回归检查、正式包和诊断包构建通过，Release Lint 无错误。2026-11-09 已在 Pixel 4 XL / Android 17 完成安装、关屏及相机释放复测，用户确认正脸和轻微歪头均可识别并上滑进入桌面。详见 [全量检查记录](FULL-AUDIT-0.13.2.md) 与 [真机验证记录](dist/DEVICE-VERIFICATION-0.13.2-20261109.md)。
-
-## 当前解锁逻辑
-
-日常解锁不会显示摄像头画面。动画注入原生 SystemUI 锁屏，可从六种样式中选择，并在设置中预览。
-
-- 停留在普通时间锁屏：人脸通过后原生锁图标变为解锁状态，仍需向上滑动进入桌面。
-- 已进入 PIN/密码界面：人脸通过后直接完成当前解锁。
-- 重启后第一次解锁、锁定模式、系统要求强认证或弱生物识别超时：必须输入 PIN/密码，模块不会绕过。
-- 快速锁屏再亮屏：创建新会话，不复用上一次的人脸结果。
-
-## 使用方法
-
-1. 覆盖安装 APK，不要卸载旧版；相同包名升级会保留设置和旧模板文件。
-2. 在 LSPosed 中启用本模块，作用域只选择“系统界面”。
-3. 重启手机或重启 SystemUI；重启后的第一次解锁先输入 PIN。
-4. 在「连接与关于」里查看锁屏模块的连接状态。
-5. 已有有效 v3/v4 模板无需重新录入；没有有效模板时，按提示重新录入一次以建立 v4 模板。自然看向屏幕即可，不要求眨眼或转头。
-
-当前版本保留已有 v3/v4 模板；新录入建立 MobileFaceNet v4 模板。验证版拥有独立数据，不能替代正式模块，也不会把录入自动同步到正式模块。升级验证包后它不再作为 LSPosed 模块显示；请确认启用的是正式包 `com.yusd.pixel2dface`，作用域只选系统界面。
-
-## 安全说明
-
-普通 RGB 前摄 2D 人脸不具备 Pixel 4 XL 原装红外/深度硬件或 Class 3 生物识别的安全强度。当前无动作模式不要求眨眼或转头，因此高质量照片、视频或屏幕重放仍可能绕过，误识别概率不可能保证为零。
-
-它只适合便利解锁，不向支付或应用提供生物认证。请勿依赖它保护银行、密码库、工作资料或其他高价值数据。模块没有网络权限；人脸特征保存在应用私有目录，不保存原始照片，也不会上传或参与系统支付认证。
-
-## 卸载与恢复
-
-1. 在 LSPosed 中停用本模块并重启手机，原系统锁屏行为即恢复。
-2. 如需删除人脸模板，再卸载应用或在应用中选择“删除人脸数据”。
-
-模块不修改 ROM、boot、system 或 vendor 分区。
-
-## 构建
-
-需要 JDK 17 和 Android SDK 36：
+需要 JDK 17 及 Android SDK 36：
 
 ```bash
-./gradlew :app:testDebugUnitTest :app:assembleRelease :app:lintRelease --no-daemon
+# 执行测试与正式包编译
+./gradlew :app:assembleRelease
 ```
 
-Windows 也可以运行 `build.ps1`。默认执行单元测试、Release 构建和 Lint，产物位于 `app/build/outputs/apk/release/app-release.apk`。真机存储回归可额外构建 `:app:assembleDebugAndroidTest`，其合成数据仅写入隔离的缓存目录。
+Windows 环境下亦可直接运行 `build.ps1`。
 
-本地 Release APK 关闭调试标记，但沿用现有 Android Debug 签名证书，以便覆盖升级先前测试版；证书 SHA-256 为 `769bae7364e73ad5c73835c7fbce30994ea4e9ff9efd32fde51404886d5ad7da`。自行编译的 APK 如果签名不同，不能直接覆盖安装。
+---
 
-GitHub Actions 的 APK 使用 CI 环境生成的证书，供构建检查使用。覆盖升级请下载 GitHub Release 中与旧版签名一致的安装包；每个版本的实际验证范围见对应发布说明。
+## License
 
-## 开源协议与第三方组件
-
-本项目自有源码采用 [MIT License](LICENSE)。AndroidX、CameraX、Google ML Kit 和 Xposed API 等第三方组件仍分别遵循其自身许可证；MIT 许可证不会改变这些依赖的授权条款。
-
-欢迎阅读 [贡献指南](CONTRIBUTING.md)、[安全说明](SECURITY.md)、[兼容性矩阵](COMPATIBILITY.md) 和 [真机验证记录](dist/DEVICE-VERIFICATION-0.13.2-20261109.md)。
+本项目自有源码遵循 [MIT License](LICENSE)。
