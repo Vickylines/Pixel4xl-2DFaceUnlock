@@ -28,7 +28,9 @@ final class MotionArtworkReview {
             float phase = state == 1 ? 2.4f / 2.8f : state == 2 ? 1.2f / 2.8f
                     : (seconds >= 3.6f ? seconds - 3.6f : seconds) / 2.8f;
             float progress = state == 0 ? 0 : Math.min(1,
-                    (seconds - (state == 1 ? 2.4f : 4.8f)) / (state == 1 ? .52f : .42f));
+                    (seconds - (state == 1 ? 2.4f : 4.8f)) * 1000
+                            / (state == 1 ? LockscreenStyleRenderer.SUCCESS_MORPH_MS
+                            : LockscreenStyleRenderer.FAILURE_MORPH_MS));
             canvas.drawColor(0xff10141f);
             label.setTextSize(32); label.setColor(0xffefbb66);
             canvas.drawText(context.getString(R.string.app_name),40,51,label);

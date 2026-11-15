@@ -123,7 +123,8 @@ final class SystemUiFeedback {
             UnlockFaceAnimationView shown = animation;
             if (shown != null) {
                 shown.showSuccess();
-                main.postDelayed(() -> dismissIfCurrent(shown), 800L);
+                main.postDelayed(() -> dismissIfCurrent(shown),
+                        style >= AnimationStyle.GLOW ? 500L : 800L);
             }
         });
     }
