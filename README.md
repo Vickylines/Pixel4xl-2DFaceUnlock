@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/Vickylines/Pixel4xl-2DFaceUnlock)](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **[0.13.13 正式版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.13.13)**将下一帧的人脸检测与上一帧的身份比对并行处理，并更新了光幕、星轨、线条和点阵四种锁屏动效。 [更新说明](dist/RELEASE-NOTES-0.13.13.md)
+> **[0.13.14 正式版](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/tag/v0.13.14)**重做四种锁屏动效，以圆角线条呈现面容，成功时嘴部线条连续变成勾。原「点阵」更新为「聚焦」。 [更新说明](dist/RELEASE-NOTES-0.13.14.md)
 
 通用构建面向已 Root、已安装 LSPosed 且具备兼容 SystemUI 接口的 Android 10–17 设备。同一 APK 包含 ARM32、ARM64、x86 和 x86_64。
 
@@ -15,6 +15,8 @@
 > 本项目不是 Google、LineageOS、Magisk 或 LSPosed 的官方项目。普通 RGB 2D 人脸可能被照片或视频绕过，只适合便利解锁。
 
 ## 下载
+
+- [下载 0.13.14 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.14/Pixel2DFaceUnlock-universal-0.13.14-motion.apk) · [安装说明](dist/INSTALL-ZH-0.13.14.txt) · [SHA-256](dist/SHA256SUMS-0.13.14.txt)
 
 - [下载 0.13.13 正式模块](https://github.com/Vickylines/Pixel4xl-2DFaceUnlock/releases/download/v0.13.13/Pixel2DFaceUnlock-universal-0.13.13-motion.apk) · [安装说明](dist/INSTALL-ZH-0.13.13.txt) · [SHA-256](dist/SHA256SUMS-0.13.13.txt)
 
