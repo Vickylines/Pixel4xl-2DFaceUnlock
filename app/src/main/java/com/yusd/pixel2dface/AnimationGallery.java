@@ -36,10 +36,11 @@ final class AnimationGallery {
         TextView[] labels = new TextView[AnimationStyle.COUNT];
         int[] pending = {AnimationStyle.positionOf(selected)};
         int columns = 2;
-        for (int row = 0; row < AnimationStyle.COUNT / columns; row++) {
+        for (int rowStart = 0; rowStart < AnimationStyle.COUNT; rowStart += columns) {
             LinearLayout line = new LinearLayout(context);
-            for (int column = 0; column < columns; column++) {
-                int position = row * columns + column;
+            int cells = Math.min(columns, AnimationStyle.COUNT - rowStart);
+            for (int column = 0; column < cells; column++) {
+                int position = rowStart + column;
                 int style = AnimationStyle.at(position);
                 MaterialCardView card = new MaterialCardView(context);
                 cards[position] = card;
@@ -76,7 +77,7 @@ final class AnimationGallery {
                     scroll.smoothScrollTo(0, 0);
                 });
                 LinearLayout.LayoutParams cell = new LinearLayout.LayoutParams(0, -1, 1);
-                if (column < columns - 1) cell.setMarginEnd(Ui.dp(context, 8));
+                if (column < cells - 1) cell.setMarginEnd(Ui.dp(context, 8));
                 line.addView(card, cell);
             }
             content.addView(line, Ui.space(context, 0, 10));

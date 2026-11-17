@@ -79,7 +79,7 @@ public final class AnimationSelectionTest {
     }
     @Test public void storedRemovedStylesReturnToFaceRing() {
         feedback.captureRoot(keyguard);
-        for (int removed : new int[]{2, 3}) {
+        for (int removed : new int[]{2, 3, 4}) {
             assertTrue(AtomicStoreFiles.locked(context, false, directory -> {
                 Properties stored = AtomicStoreFiles.readProperties(context, directory);
                 stored.setProperty("animation_style", Integer.toString(removed));
@@ -106,10 +106,10 @@ public final class AnimationSelectionTest {
     }
     @Test public void replacedRootKeepsTheActiveStyleAndReleasesTheOldView() {
         feedback.captureRoot(keyguard);
-        feedback.scanning(AnimationStyle.MINIMAL);
+        feedback.scanning(AnimationStyle.FOCUS);
         View previous = shown();
         feedback.captureRoot(root());
-        assertEquals(AnimationStyle.MINIMAL, style());
+        assertEquals(AnimationStyle.FOCUS, style());
         assertNull(previous.getParent());
         assertTrue(shown().isAttachedToWindow());
     }
@@ -117,9 +117,9 @@ public final class AnimationSelectionTest {
         feedback.captureRoot(keyguard);
         feedback.scanning(AnimationStyle.FOCUS);
         feedback.failure();
-        feedback.scanning(AnimationStyle.MINIMAL);
+        feedback.scanning(AnimationStyle.ISLAND);
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1100));
-        assertEquals(AnimationStyle.MINIMAL, style());
+        assertEquals(AnimationStyle.ISLAND, style());
         assertEquals(1f, shown().getAlpha(), .01f);
     }
     @Test public void rotationRepositionsTheSameOverlay() {

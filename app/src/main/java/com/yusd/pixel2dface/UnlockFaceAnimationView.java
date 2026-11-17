@@ -45,7 +45,7 @@ public final class UnlockFaceAnimationView extends View {
     private final RectF pillBounds = new RectF();
     private final float density;
     private final ValueAnimator ticker;
-    private final LockscreenStyleRenderer accentRenderer = new LockscreenStyleRenderer();
+    private final LockscreenStyleRenderer focusRenderer = new LockscreenStyleRenderer();
 
     private int state = SEARCHING;
     private int visualStyle;
@@ -149,7 +149,7 @@ public final class UnlockFaceAnimationView extends View {
             return;
         }
         resumeTicker();
-        boolean portraitStyle = visualStyle >= AnimationStyle.MINIMAL;
+        boolean portraitStyle = visualStyle == AnimationStyle.FOCUS;
         setAlpha(portraitStyle ? .76f : 0f);
         float initialScale = portraitStyle ? .97f : .94f;
         setScaleX(initialScale);
@@ -214,8 +214,8 @@ public final class UnlockFaceAnimationView extends View {
             canvas.translate(shake, 0f);
         }
 
-        if (visualStyle >= AnimationStyle.MINIMAL) {
-            drawNewStyle(canvas, cx, cy, progress);
+        if (visualStyle == AnimationStyle.FOCUS) {
+            drawFocus(canvas, cx, cy, progress);
         } else if (visualStyle == STYLE_DYNAMIC_ISLAND) {
             float islandY = cy + dp(0.32f)
                     * (float) Math.sin(phase * Math.PI * 2.0);
@@ -233,12 +233,12 @@ public final class UnlockFaceAnimationView extends View {
         canvas.restoreToCount(save);
     }
 
-    private void drawNewStyle(Canvas canvas, float cx, float cy, float progress) {
+    private void drawFocus(Canvas canvas, float cx, float cy, float progress) {
         int saved = canvas.save();
         canvas.translate(cx, cy);
         float fit = Math.min(density, getWidth() / 176f);
         canvas.scale(fit, fit);
-        accentRenderer.draw(canvas, visualStyle, state,
+        focusRenderer.draw(canvas, state,
                 state == SEARCHING ? phase : outcomePhase, progress, ValueAnimator.areAnimatorsEnabled());
         canvas.restoreToCount(saved);
     }
@@ -671,7 +671,7 @@ public final class UnlockFaceAnimationView extends View {
     private float transitionProgress() {
         if (!ValueAnimator.areAnimatorsEnabled()) return 1f;
         long duration = state == SUCCESS ? SUCCESS_MORPH_MS : FAILURE_MORPH_MS;
-        if (visualStyle >= AnimationStyle.MINIMAL) {
+        if (visualStyle == AnimationStyle.FOCUS) {
             duration = state == SUCCESS ? LockscreenStyleRenderer.SUCCESS_MORPH_MS
                     : LockscreenStyleRenderer.FAILURE_MORPH_MS;
         }

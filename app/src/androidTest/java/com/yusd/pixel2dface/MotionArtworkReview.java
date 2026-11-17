@@ -16,10 +16,9 @@ final class MotionArtworkReview {
     static void export(Context context) throws Exception {
         File folder = context.getExternalFilesDir("art-review");
         LockscreenStyleRenderer renderer = new LockscreenStyleRenderer();
-        int[] styles = {AnimationStyle.MINIMAL, AnimationStyle.FOCUS};
         Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
         label.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        Bitmap image = Bitmap.createBitmap(1056,392,Bitmap.Config.ARGB_8888);
+        Bitmap image = Bitmap.createBitmap(528,392,Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(image);
         for (int frame = 0; frame < 180; frame++) {
             float seconds = frame / 30f;
@@ -36,19 +35,17 @@ final class MotionArtworkReview {
             label.setTextSize(32); label.setColor(0xffefbb66);
             canvas.drawText(context.getString(R.string.app_name),40,51,label);
             label.setTextSize(23); label.setColor(0xffdfe5ee);
-            canvas.drawText(state == 0 ? "识别中" : state == 1 ? "成功" : "失败",925,49,label);
-            for (int i = 0; i < styles.length; i++) {
-                float x = i * 528 + 264;
-                int save = canvas.save();
-                canvas.translate(x,200);
-                canvas.scale(3,3);
-                renderer.draw(canvas,styles[i],state,phase,progress,true);
-                canvas.restoreToCount(save);
-                label.setTextSize(24); label.setColor(0xffe3e8f0);
-                label.setTextAlign(Paint.Align.CENTER);
-                canvas.drawText(AnimationStyle.name(styles[i]),x,344,label);
-                label.setTextAlign(Paint.Align.LEFT);
-            }
+            label.setTextAlign(Paint.Align.RIGHT);
+            canvas.drawText(state == 0 ? "识别中" : state == 1 ? "成功" : "失败",488,49,label);
+            int save = canvas.save();
+            canvas.translate(264,200);
+            canvas.scale(3,3);
+            renderer.draw(canvas,state,phase,progress,true);
+            canvas.restoreToCount(save);
+            label.setTextSize(24); label.setColor(0xffe3e8f0);
+            label.setTextAlign(Paint.Align.CENTER);
+            canvas.drawText(AnimationStyle.name(AnimationStyle.FOCUS),264,344,label);
+            label.setTextAlign(Paint.Align.LEFT);
             write(image,new File(folder,String.format(java.util.Locale.ROOT,"frame-%03d.png",frame)));
         }
         image.recycle();

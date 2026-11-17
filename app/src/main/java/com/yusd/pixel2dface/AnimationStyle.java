@@ -2,10 +2,10 @@ package com.yusd.pixel2dface;
 
 /** Stable persisted IDs shared by app settings, IPC and the SystemUI renderer. */
 final class AnimationStyle {
-    static final int FACE = 0, ISLAND = 1, MINIMAL = 4, FOCUS = 5;
-    // IDs 2 and 3 belonged to removed styles. Keep them reserved for persisted settings.
-    private static final int[] IDS = {FACE, ISLAND, MINIMAL, FOCUS};
-    private static final String[] NAMES = {"面容光环", "灵动岛", "线条", "聚焦"};
+    static final int FACE = 0, ISLAND = 1, FOCUS = 5;
+    // IDs 2 through 4 belonged to removed styles and remain reserved.
+    private static final int[] IDS = {FACE, ISLAND, FOCUS};
+    private static final String[] NAMES = {"面容光环", "灵动岛", "聚焦"};
     static final int COUNT = IDS.length;
     private AnimationStyle() { }
 

@@ -61,7 +61,8 @@ public final class UiReviewInstrumentation extends Instrumentation {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             if (Boolean.parseBoolean(arguments.getString("overlayReview", "false"))) {
                 reviewNativeOverlay(activity);
-                result.putString("result", "All four native overlays animated above elevated content and cleaned up");
+                result.putString("result", AnimationStyle.COUNT
+                        + " native overlays animated above elevated content and cleaned up");
                 finish(Activity.RESULT_OK, result);
                 return;
             }
