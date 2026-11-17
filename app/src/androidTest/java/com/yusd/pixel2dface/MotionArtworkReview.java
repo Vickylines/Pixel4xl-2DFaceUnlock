@@ -42,7 +42,7 @@ final class MotionArtworkReview {
                 int save = canvas.save();
                 canvas.translate(x,200);
                 canvas.scale(3,3);
-                renderer.draw(canvas,styles[i],state,phase,progress);
+                renderer.draw(canvas,styles[i],state,phase,progress,true);
                 canvas.restoreToCount(save);
                 label.setTextSize(24); label.setColor(0xffe3e8f0);
                 label.setTextAlign(Paint.Align.CENTER);

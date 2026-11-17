@@ -239,7 +239,7 @@ public final class UnlockFaceAnimationView extends View {
         float fit = Math.min(density, getWidth() / 176f);
         canvas.scale(fit, fit);
         accentRenderer.draw(canvas, visualStyle, state,
-                state == SEARCHING ? phase : outcomePhase, progress);
+                state == SEARCHING ? phase : outcomePhase, progress, ValueAnimator.areAnimatorsEnabled());
         canvas.restoreToCount(saved);
     }
 
