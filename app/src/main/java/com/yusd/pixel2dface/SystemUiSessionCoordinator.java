@@ -354,6 +354,10 @@ final class SystemUiSessionCoordinator {
     }
 
     private void endFailedSession(String token, long generation, String reason) {
+        endFailedSession(token, generation, reason, false);
+    }
+
+    private void endFailedSession(String token, long generation, String reason, boolean recognitionRejected) {
         long cancelledGeneration;
         synchronized (lock) {
             if (!session.abort(token, generation)) return;
@@ -363,6 +367,7 @@ final class SystemUiSessionCoordinator {
             if (!isGeneration(cancelledGeneration)) return;
             SystemUiCompat.clearStoredWeakAuthentication(getMonitor(), -1);
             feedback.unlockedIcon(false);
+            if (recognitionRejected) feedback.resultHaptic(false);
             feedback.failure();
         });
         cancelCameraHost(token);
@@ -628,7 +633,7 @@ final class SystemUiSessionCoordinator {
         trace("result_received", generation, "success=" + success
                 + ", sessionAgeMs=" + sessionAgeMs());
         if (!success || currentMonitor == null) {
-            endFailedSession(token, generation, success ? "monitor unavailable" : "capture failed");
+            endFailedSession(token, generation, success ? "monitor unavailable" : "capture failed", !success);
             return;
         }
         Context attached = getContext();
@@ -709,6 +714,8 @@ final class SystemUiSessionCoordinator {
                     + SystemUiCompat.getAuthenticationAdapterLabel() + ", nativeCanSkip="
                     + SystemUiCompat.canSkipBouncer(currentMonitor, user));
             feedback.unlockedIcon(true);
+            // The native bouncer callback handles its own feedback. This path stores a passive result.
+            feedback.resultHaptic(true);
             feedback.success();
             bouncerStateChanged();
             refreshTimeout(attached);

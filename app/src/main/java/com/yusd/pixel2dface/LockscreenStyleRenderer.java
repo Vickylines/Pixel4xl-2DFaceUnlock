@@ -3,12 +3,16 @@ package com.yusd.pixel2dface;
 import static com.yusd.pixel2dface.UnlockFaceAnimationView.FAILURE;
 import static com.yusd.pixel2dface.UnlockFaceAnimationView.SUCCESS;
 
+import android.graphics.Bitmap;
+import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.PathMeasure;
+import android.graphics.RectF;
 import android.graphics.Shader;
 import android.graphics.SweepGradient;
 
@@ -27,20 +31,31 @@ final class LockscreenStyleRenderer {
     private static final float QUARTER_CIRCLE_CONTROL = .55228475f;
     private static final float FOCUS_RING_RADIUS = 23.5f;
     private static final float FOCUS_STROKE = 2.15f;
+    private static final float CORNER_BISECTOR = .70710678f;
+    private static final float CONTOUR_LIGHT_PEAK = .028f;
+    private static final RectF REFLECTION_BOUNDS = new RectF(-10, -6.25f, 10, 6.25f);
 
     private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Path jaw = new Path();
-    private final Path forehead = new Path();
-    private final Path corner = new Path();
+    private final Paint reflectionPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+    private final Path outline = new Path();
+    private final Path focusOutline = new Path();
+    private final Path[] focusCorners = {new Path(), new Path(), new Path(), new Path()};
     private final Path stroke = new Path();
     private final Matrix lightPosition = new Matrix();
+    private final PathMeasure jawScan = new PathMeasure();
+    private final PathMeasure browScan = new PathMeasure();
+    private final float[] lightPoint = new float[2];
+    private final float[] lightTangent = new float[2];
+    private final float[] cornerElbow = new float[4];
+    private final float[] cornerShine = new float[4];
     private final SweepGradient contourLight = new SweepGradient(0, 0,
-            new int[]{0x00a9d9ff, 0x54a9d9ff, 0xffe8f8ff, 0x00a9d9ff, 0x00a9d9ff},
-            new float[]{0, .105f, .197f, .27f, 1});
+            new int[]{0x00a9d9ff, 0xffe8f8ff, 0x54a9d9ff, 0x00a9d9ff, 0x00a9d9ff},
+            new float[]{0, CONTOUR_LIGHT_PEAK, .11f, .23f, 1});
     private final LinearGradient cornerLight = new LinearGradient(-24, -24, -12, -12,
             new int[]{0xfff0f7ff, 0xcbc6e7ff, 0x00a9d9ff},
             new float[]{0, .26f, 1}, Shader.TileMode.CLAMP);
     private float outlineRoundness = -1;
+    private float outlineGap;
 
     LockscreenStyleRenderer() {
         line.setStyle(Paint.Style.STROKE);
@@ -86,18 +101,32 @@ final class LockscreenStyleRenderer {
             return;
         }
         shapeOutline(rounding);
-        paintLine(canvas, forehead, color, mix(1.75f, OUTLINE_RING_STROKE, rounding),
-                mix(.83f, 1, rounding));
-        paintLine(canvas, jaw, color, mix(1.9f, OUTLINE_RING_STROKE, rounding),
+        paintLine(canvas, outline, color, mix(1.9f, OUTLINE_RING_STROKE, rounding),
                 mix(.90f, 1, rounding));
         if (scanningLight > 0) {
-            lightPosition.setRotate(phase * 360 - 155);
-            contourLight.setLocalMatrix(lightPosition);
-            float reflection = scanningLight * (1 - rounding);
-            paintHighlight(canvas, jaw, contourLight, 3.25f, .26f * reflection);
-            paintHighlight(canvas, jaw, contourLight, 1.8f, .87f * reflection);
-            paintHighlight(canvas, forehead, contourLight, 1.7f, .85f * reflection);
+            drawOutlineReflection(canvas, phase, scanningLight * (1 - rounding));
         }
+    }
+
+    private void drawOutlineReflection(Canvas canvas, float phase, float opacity) {
+        float jawLength = jawScan.getLength();
+        float browLength = browScan.getLength();
+        float distance = ((phase + .73f) % 1) * (jawLength + browLength + 2 * outlineGap);
+        PathMeasure section = jawScan;
+        if (distance > jawLength) {
+            distance -= jawLength + outlineGap;
+            section = browScan;
+        }
+        float length = section.getLength();
+        if (distance < 0 || distance > length) return;
+        section.getPosTan(distance, lightPoint, lightTangent);
+        float strength = opacity * smooth(0, 4, distance) * (1 - smooth(length - 4, length, distance));
+        float angle = (float) Math.toDegrees(Math.atan2(lightPoint[1], lightPoint[0]));
+        float tangent = (float) Math.toDegrees(Math.atan2(lightTangent[1], lightTangent[0]));
+        drawSoftReflection(canvas, lightPoint[0], lightPoint[1], tangent, .82f * strength);
+        lightPosition.setRotate(angle - 360 * CONTOUR_LIGHT_PEAK);
+        contourLight.setLocalMatrix(lightPosition);
+        paintHighlight(canvas, outline, contourLight, 1.65f, strength);
     }
 
     private void shapeOutline(float rounding) {
@@ -111,12 +140,12 @@ final class LockscreenStyleRenderer {
         float chin = mix(29.5f, radius, rounding);
         float jawControlX = mix(12.6f, tangent, rounding);
         float jawControlY = mix(19.3f, tangent, rounding);
-        jaw.rewind();
-        jaw.moveTo(-cheek, tipY);
-        jaw.lineTo(-cheek, cheekY);
-        jaw.cubicTo(-cheek, jawControlY, -jawControlX, chin, 0, chin);
-        jaw.cubicTo(jawControlX, chin, cheek, jawControlY, cheek, cheekY);
-        jaw.lineTo(cheek, tipY);
+        outline.rewind();
+        outline.moveTo(-cheek, tipY);
+        outline.lineTo(-cheek, cheekY);
+        outline.cubicTo(-cheek, jawControlY, -jawControlX, chin, 0, chin);
+        outline.cubicTo(jawControlX, chin, cheek, jawControlY, cheek, cheekY);
+        outline.lineTo(cheek, tipY);
 
         // Matching quarter-curve control points let the two contours meet with a shared tangent.
         float temple = mix(21, radius, rounding);
@@ -125,10 +154,14 @@ final class LockscreenStyleRenderer {
         float templeControlX = mix(17.4f, radius, rounding);
         float templeControlY = mix(-24.9f, -tangent, rounding);
         float crownControlX = mix(8.7f, tangent, rounding);
-        forehead.rewind();
-        forehead.moveTo(-temple, templeY);
-        forehead.cubicTo(-templeControlX, templeControlY, -crownControlX, crown, 0, crown);
-        forehead.cubicTo(crownControlX, crown, templeControlX, templeControlY, temple, templeY);
+        // Draw the brow right to left so light can continue from the end of the jaw.
+        outline.moveTo(temple, templeY);
+        outline.cubicTo(templeControlX, templeControlY, crownControlX, crown, 0, crown);
+        outline.cubicTo(-crownControlX, crown, -templeControlX, templeControlY, -temple, templeY);
+        jawScan.setPath(outline, false);
+        browScan.setPath(outline, false);
+        browScan.nextContour();
+        outlineGap = (float) Math.hypot(cheek - temple, tipY - templeY);
     }
 
     private void drawFocus(Canvas canvas, int state, float phase, float progress,
@@ -140,7 +173,9 @@ final class LockscreenStyleRenderer {
             return;
         }
 
-        for (int quarter = 0; quarter < 4; quarter++) {
+        float reflection = scanningLight * (1 - roundness);
+        focusOutline.rewind();
+        for (int quarter = 0; quarter < focusCorners.length; quarter++) {
             boolean firstPair = quarter % 2 == 0;
             float catchLight = .5f + .5f * (float) Math.cos((phase - quarter * .25f) * TAU);
             float settle = firstPair ? smooth(.03f, .52f, progress) : smooth(.14f, .64f, progress);
@@ -151,19 +186,58 @@ final class LockscreenStyleRenderer {
             // The opening shrinks with the straight sections as the corner becomes a quarter circle.
             float tip = tangent * (10f / 14f);
             float farEdge = tangent + radius;
+            Path corner = focusCorners[quarter];
             corner.rewind();
             corner.moveTo(tip, -half);
             corner.lineTo(tangent, -half);
             corner.arcTo(-half, -half, farEdge, farEdge, -90, -90, false);
             corner.lineTo(-half, tip);
 
-            int saved = canvas.save();
-            canvas.rotate(quarter * 90);
-            float reflection = scanningLight * (1 - roundness);
-            int edge = blend(color, accent, .34f * reflection * catchLight);
-            paintLine(canvas, corner, edge, FOCUS_STROKE, .90f + .10f * settle);
-            paintHighlight(canvas, corner, cornerLight, 1, reflection * (.20f + .73f * catchLight));
-            canvas.restoreToCount(saved);
+            lightPosition.setRotate(quarter * 90);
+            focusOutline.addPath(corner, lightPosition);
+            cornerElbow[quarter] = tangent - radius * CORNER_BISECTOR;
+            cornerShine[quarter] = catchLight;
+        }
+
+        int saved = canvas.save();
+        canvas.rotate(8 * (float) Math.sin(phase * TAU) * reflection);
+        int edge = blend(color, accent, .14f * reflection);
+        paintLine(canvas, focusOutline, edge, FOCUS_STROKE, mix(.92f, 1, roundness));
+        if (reflection > 0) {
+            for (int quarter = 0; quarter < focusCorners.length; quarter++) {
+                int cornerSave = canvas.save();
+                canvas.rotate(quarter * 90);
+                float shine = cornerShine[quarter];
+                float elbow = cornerElbow[quarter];
+                drawSoftReflection(canvas, elbow, elbow, -45, .76f * reflection * smooth(.5f, 1, shine));
+                paintHighlight(canvas, focusCorners[quarter], cornerLight, 1, reflection * (.20f + .73f * shine));
+                canvas.restoreToCount(cornerSave);
+            }
+        }
+        canvas.restoreToCount(saved);
+    }
+
+    private void drawSoftReflection(Canvas canvas, float x, float y, float angle, float opacity) {
+        if (opacity <= 0) return;
+        int saved = canvas.save();
+        canvas.translate(x, y);
+        canvas.rotate(angle);
+        reflectionPaint.setAlpha(alpha(opacity));
+        canvas.drawBitmap(ReflectionTexture.BITMAP, null, REFLECTION_BOUNDS, reflectionPaint);
+        canvas.restoreToCount(saved);
+    }
+
+    private static final class ReflectionTexture {
+        // Cache the Gaussian mask in software so previews and hardware overlays share it.
+        static final Bitmap BITMAP = create();
+
+        private static Bitmap create() {
+            Bitmap bitmap = Bitmap.createBitmap(64, 40, Bitmap.Config.ARGB_8888);
+            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            paint.setColor(BLUE);
+            paint.setMaskFilter(new BlurMaskFilter(7, BlurMaskFilter.Blur.NORMAL));
+            new Canvas(bitmap).drawRoundRect(20, 17, 44, 23, 3, 3, paint);
+            return bitmap;
         }
     }
 

@@ -3,6 +3,7 @@ package com.yusd.pixel2dface;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
@@ -12,7 +13,7 @@ import java.lang.ref.WeakReference;
 
 import de.robv.android.xposed.XposedHelpers;
 
-/** Optional visual adapters. No method in this class grants authentication. */
+/** Optional visual and haptic feedback for the native keyguard. */
 final class SystemUiFeedback {
     private final Handler main;
     private volatile WeakReference<Object> entryIcon = new WeakReference<>(null);
@@ -139,6 +140,24 @@ final class SystemUiFeedback {
                 shown.showFailure("请使用密码");
                 // A previous session's delayed cleanup must never remove a new animation.
                 main.postDelayed(() -> dismissIfCurrent(shown), 800L);
+            }
+        });
+    }
+
+    void resultHaptic(boolean success) {
+        onMain(() -> {
+            ViewGroup container = root.get();
+            if (container == null || !container.isShown()) return;
+            int effect;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                effect = success ? HapticFeedbackConstants.CONFIRM : HapticFeedbackConstants.REJECT;
+            } else {
+                effect = success ? HapticFeedbackConstants.KEYBOARD_TAP : HapticFeedbackConstants.LONG_PRESS;
+            }
+            try {
+                container.performHapticFeedback(effect);
+            } catch (RuntimeException error) {
+                SystemUiLog.error("Unable to play keyguard haptic feedback", error);
             }
         });
     }
