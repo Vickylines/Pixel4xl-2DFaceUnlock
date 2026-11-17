@@ -24,8 +24,9 @@ public final class UnlockFaceAnimationView extends View {
     static final int SUCCESS = 1;
     static final int FAILURE = 2;
     static final long SCAN_CYCLE_MS = 2800L;
-    private static final long SUCCESS_MORPH_MS = 680L;
-    private static final long FAILURE_MORPH_MS = 580L;
+    static final long SUCCESS_MORPH_MS = 680L;
+    static final long FAILURE_MORPH_MS = 580L;
+    static final float FOCUS_HANDOFF_END = .12f;
 
     private final Paint backgroundPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint ambientPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -202,30 +203,51 @@ public final class UnlockFaceAnimationView extends View {
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
+        drawFrame(canvas, state == SEARCHING ? 0f : transitionProgress());
+    }
+
+    void drawFrame(Canvas canvas, float progress) {
         float cx = getWidth() / 2f;
         float cy = getHeight() / 2f;
-        float breath = 0.5f + 0.5f * (float) Math.sin(phase * Math.PI * 2.0);
-        float progress = state == SEARCHING ? 0f : transitionProgress();
+        if (visualStyle == AnimationStyle.FOCUS && state == SEARCHING) {
+            drawFocus(canvas, cx, cy, phase, 1, 1);
+            return;
+        }
 
-        int save = canvas.save();
-        if (state == FAILURE && visualStyle <= AnimationStyle.ISLAND) {
+        int save;
+        float arrivingFace = 1;
+        if (visualStyle == AnimationStyle.FOCUS && progress < FOCUS_HANDOFF_END) {
+            drawFocus(canvas, cx, cy, outcomePhase,
+                    1 - smoothStep(.035f, FOCUS_HANDOFF_END, progress),
+                    1 - smoothStep(0, .078f, progress));
+            // Clear the outgoing features before the Face Ring portrait comes through.
+            arrivingFace = smoothStep(.052f, FOCUS_HANDOFF_END, progress);
+            int opacity = Math.round(255 * smoothStep(0, FOCUS_HANDOFF_END, progress));
+            if (opacity == 0) return;
+            // Blend the complete result surface, including its disk and inner stroke.
+            float extent = dp(40);
+            save = canvas.saveLayerAlpha(cx - extent, cy - extent, cx + extent, cy + extent, opacity);
+        } else {
+            save = canvas.save();
+        }
+
+        float breath = 0.5f + 0.5f * (float) Math.sin(phase * Math.PI * 2.0);
+        if (state == FAILURE) {
             float shake = (float) Math.sin(progress * Math.PI * 7.0)
                     * (1f - progress) * dp(1.55f);
             canvas.translate(shake, 0f);
         }
 
-        if (visualStyle == AnimationStyle.FOCUS) {
-            drawFocus(canvas, cx, cy, progress);
-        } else if (visualStyle == STYLE_DYNAMIC_ISLAND) {
+        if (visualStyle == STYLE_DYNAMIC_ISLAND) {
             float islandY = cy + dp(0.32f)
                     * (float) Math.sin(phase * Math.PI * 2.0);
             drawDynamicIsland(canvas, cx, islandY, progress);
         } else {
             drawBackground(canvas, cx, cy, breath, progress);
             if (state == SUCCESS) {
-                drawSuccess(canvas, cx, cy, progress);
+                drawSuccess(canvas, cx, cy, progress, arrivingFace);
             } else if (state == FAILURE) {
-                drawFailure(canvas, cx, cy, progress);
+                drawFailure(canvas, cx, cy, progress, arrivingFace);
             } else {
                 drawSearching(canvas, cx, cy, breath);
             }
@@ -233,13 +255,14 @@ public final class UnlockFaceAnimationView extends View {
         canvas.restoreToCount(save);
     }
 
-    private void drawFocus(Canvas canvas, float cx, float cy, float progress) {
+    private void drawFocus(Canvas canvas, float cx, float cy, float scanPhase,
+            float frameOpacity, float faceOpacity) {
         int saved = canvas.save();
         canvas.translate(cx, cy);
         float fit = Math.min(density, getWidth() / 176f);
         canvas.scale(fit, fit);
-        focusRenderer.draw(canvas, state,
-                state == SEARCHING ? phase : outcomePhase, progress, ValueAnimator.areAnimatorsEnabled());
+        focusRenderer.draw(canvas, ValueAnimator.areAnimatorsEnabled() ? scanPhase : 0f,
+                frameOpacity, faceOpacity);
         canvas.restoreToCount(saved);
     }
 
@@ -588,8 +611,8 @@ public final class UnlockFaceAnimationView extends View {
         canvas.drawArc(arcBounds, 20f, 140f, false, glyphPaint);
     }
 
-    private void drawSuccess(Canvas canvas, float cx, float cy, float progress) {
-        float oldFaceAlpha = 1f - smoothStep(0f, 0.28f, progress);
+    private void drawSuccess(Canvas canvas, float cx, float cy, float progress, float faceOpacity) {
+        float oldFaceAlpha = faceOpacity * (1f - smoothStep(0f, 0.28f, progress));
         if (oldFaceAlpha > 0f) {
             drawFace(canvas, cx, cy, 0.5f, Math.round(220f * oldFaceAlpha));
         }
@@ -615,8 +638,8 @@ public final class UnlockFaceAnimationView extends View {
         }
     }
 
-    private void drawFailure(Canvas canvas, float cx, float cy, float progress) {
-        float oldFaceAlpha = 1f - smoothStep(0f, 0.25f, progress);
+    private void drawFailure(Canvas canvas, float cx, float cy, float progress, float faceOpacity) {
+        float oldFaceAlpha = faceOpacity * (1f - smoothStep(0f, 0.25f, progress));
         if (oldFaceAlpha > 0f) {
             drawFace(canvas, cx, cy, 0.5f, Math.round(210f * oldFaceAlpha));
         }
@@ -649,10 +672,6 @@ public final class UnlockFaceAnimationView extends View {
     private float transitionProgress() {
         if (!ValueAnimator.areAnimatorsEnabled()) return 1f;
         long duration = state == SUCCESS ? SUCCESS_MORPH_MS : FAILURE_MORPH_MS;
-        if (visualStyle == AnimationStyle.FOCUS) {
-            duration = state == SUCCESS ? LockscreenStyleRenderer.SUCCESS_MORPH_MS
-                    : LockscreenStyleRenderer.FAILURE_MORPH_MS;
-        }
         return clamp((SystemClock.elapsedRealtime() - stateStartedAt) / (float) duration);
     }
 

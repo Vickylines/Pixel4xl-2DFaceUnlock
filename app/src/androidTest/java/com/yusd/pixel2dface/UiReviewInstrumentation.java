@@ -42,8 +42,9 @@ public final class UiReviewInstrumentation extends Instrumentation {
         }
         try {
             if (Boolean.parseBoolean(arguments.getString("artReview", "false"))) {
-                MotionArtworkReview.export(getTargetContext());
-                result.putString("result", "Exported native artwork frames and adaptive icon");
+                int sharedFrames = MotionArtworkReview.export(getTargetContext());
+                result.putString("result", "Exported native artwork frames and adaptive icon. Verified "
+                        + sharedFrames + " Focus result frames against Face Ring");
                 finish(Activity.RESULT_OK, result);
                 return;
             }
