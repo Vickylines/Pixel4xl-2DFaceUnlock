@@ -140,8 +140,9 @@ final class LockscreenStyleRenderer {
     }
 
     private void drawMouth(Canvas canvas, int color, float check, float frown) {
-        // The short leg leads. The long leg follows the closing gap all the way to the finish.
-        float shortLeg = check * (1.60f - .60f * check);
+        // Let the short stroke keep its curve until the last part of the ring closure.
+        float shortLeg = check - .10f * check * (1 - check);
+        float straighten = shortLeg * shortLeg;
         float longLeg = check * (.54f + .46f * check);
         float mouthEdge = mix(8, 9.6f, frown);
         float mouthCenter = mix(11.5f, 7, frown);
@@ -157,10 +158,10 @@ final class LockscreenStyleRenderer {
         stroke.rewind();
         stroke.moveTo(leftX, leftY);
         stroke.cubicTo(
-                mix(leftX, kneeX, mix(.225f, 1f / 3f, shortLeg)),
-                mix(leftY, kneeY, mix(shoulder, 1f / 3f, shortLeg)),
-                mix(leftX, kneeX, mix(.60f, 2f / 3f, shortLeg)),
-                mix(leftY, kneeY, mix(1, 2f / 3f, shortLeg)),
+                mix(leftX, kneeX, mix(.225f, 1f / 3f, straighten)),
+                mix(leftY, kneeY, mix(shoulder, 1f / 3f, straighten)),
+                mix(leftX, kneeX, mix(.60f, 2f / 3f, straighten)),
+                mix(leftY, kneeY, mix(1, 2f / 3f, straighten)),
                 kneeX, kneeY);
         stroke.cubicTo(
                 mix(kneeX, tipX, mix(.40f, 1f / 3f, longLeg)),
