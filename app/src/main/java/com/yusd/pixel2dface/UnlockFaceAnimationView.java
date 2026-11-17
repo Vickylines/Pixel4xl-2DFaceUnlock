@@ -603,7 +603,9 @@ public final class UnlockFaceAnimationView extends View {
         canvas.drawArc(arcBounds, -90f, 360f * ringProgress, false, glyphPaint);
 
         float checkProgress = easeOut(clamp((progress - 0.16f) / 0.62f));
-        drawCheck(canvas, cx, cy, checkProgress);
+        glyphPaint.setStrokeWidth(dp(SuccessCheckmark.STROKE_WIDTH));
+        SuccessCheckmark.trace(path, cx, cy, density, checkProgress);
+        canvas.drawPath(path, glyphPaint);
 
         if (progress > 0.72f) {
             float settle = smoothStep(0.72f, 1f, progress);
@@ -611,30 +613,6 @@ public final class UnlockFaceAnimationView extends View {
             glyphPaint.setStrokeWidth(dp(1.45f));
             canvas.drawCircle(cx, cy, dp(18f + 5f * settle), glyphPaint);
         }
-    }
-
-    private void drawCheck(Canvas canvas, float cx, float cy, float progress) {
-        float ax = cx - dp(8.1f);
-        float ay = cy;
-        float bx = cx - dp(1.9f);
-        float by = cy + dp(6f);
-        float cx2 = cx + dp(9.8f);
-        float cy2 = cy - dp(7.7f);
-
-        glyphPaint.setStyle(Paint.Style.STROKE);
-        glyphPaint.setStrokeWidth(dp(2.8f));
-        glyphPaint.setColor(Color.rgb(72, 228, 130));
-        path.reset();
-        path.moveTo(ax, ay);
-        if (progress < 0.34f) {
-            float local = progress / 0.34f;
-            path.lineTo(lerp(ax, bx, local), lerp(ay, by, local));
-        } else {
-            path.lineTo(bx, by);
-            float local = (progress - 0.34f) / 0.66f;
-            path.lineTo(lerp(bx, cx2, local), lerp(by, cy2, local));
-        }
-        canvas.drawPath(path, glyphPaint);
     }
 
     private void drawFailure(Canvas canvas, float cx, float cy, float progress) {

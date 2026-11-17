@@ -24,6 +24,7 @@ final class LockscreenStyleRenderer {
     private static final float FOCUS_RING_RADIUS = 23.5f;
     private static final float FOCUS_STROKE = 2.15f;
     private static final float RESULT_STROKE = 1.98f;
+    private static final float CHECK_START = .10f;
 
     private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path corner = new Path();
@@ -47,7 +48,7 @@ final class LockscreenStyleRenderer {
         float travel = progress * (1 - .5f * progress);
         float motionPhase = animated
                 ? phase + travel * duration / UnlockFaceAnimationView.SCAN_CYCLE_MS : 0;
-        // The gap, mouth and final stroke weights settle on the same eased progress.
+        // The check uses the same progress as the gap so both finish together.
         float joining = smooth(.02f, .97f, progress);
         int outcome = failed ? WARM : GREEN;
         float resultColor = smooth(0, failed ? .86f : .92f, joining);
@@ -55,6 +56,11 @@ final class LockscreenStyleRenderer {
         int accent = blend(BLUE, outcome, resultColor);
         drawFrame(canvas, failed, motionPhase, progress, joining, color, accent);
         drawFace(canvas, state, motionPhase, joining, color);
+        if (state == SUCCESS && joining > CHECK_START) {
+            float check = (joining - CHECK_START) / (1 - CHECK_START);
+            SuccessCheckmark.trace(stroke, 0, 0, 1, check);
+            paintLine(canvas, stroke, color, SuccessCheckmark.STROKE_WIDTH, 1);
+        }
     }
 
     private void drawFrame(Canvas canvas, boolean failed, float phase, float progress,
@@ -115,8 +121,8 @@ final class LockscreenStyleRenderer {
 
     private void drawFace(Canvas canvas, int state, float phase, float joining, int color) {
         boolean accepted = state == SUCCESS;
-        float eyes = accepted ? smooth(.01f, .42f, joining) : 0;
-        float nose = accepted ? smooth(.025f, .50f, joining) : 0;
+        float eyes = accepted ? smooth(.01f, .25f, joining) : 0;
+        float nose = accepted ? smooth(.025f, .32f, joining) : 0;
         float frown = state == FAILURE ? joining : 0;
         float blink = smooth(.30f, .34f, phase) * (1 - smooth(.34f, .39f, phase));
         float open = mix(1.65f, .50f, blink * (1 - joining));
@@ -136,40 +142,19 @@ final class LockscreenStyleRenderer {
         stroke.lineTo(-2.7f, 3.6f);
         paintLine(canvas, stroke, color, 2.0f, 1 - nose);
 
-        drawMouth(canvas, color, accepted ? joining : 0, frown);
+        float mouthOpacity = accepted ? 1 - smooth(.01f, .23f, joining) : 1;
+        if (mouthOpacity > 0) drawMouth(canvas, color, frown, mouthOpacity);
     }
 
-    private void drawMouth(Canvas canvas, int color, float check, float frown) {
-        // Let the short stroke keep its curve until the last part of the ring closure.
-        float shortLeg = check - .10f * check * (1 - check);
-        float straighten = shortLeg * shortLeg;
-        float longLeg = check * (.54f + .46f * check);
-        float mouthEdge = mix(8, 9.6f, frown);
-        float mouthCenter = mix(11.5f, 7, frown);
+    private void drawMouth(Canvas canvas, int color, float frown, float opacity) {
+        float edge = mix(8, 9.6f, frown);
+        float center = mix(11.5f, 7, frown);
         float shoulder = mix(5f / 7f, .58f, frown);
-        float leftX = mix(-8, -9.5f, shortLeg);
-        float leftY = mix(mouthEdge, .6f, shortLeg);
-        float kneeX = mix(0, -3.8f, shortLeg);
-        float kneeY = mix(mouthCenter, 6.3f, shortLeg);
-        float tipX = mix(8, 10.9f, longLeg) + 2.6f * longLeg * (1 - longLeg);
-        float tipY = mix(mouthEdge, -8.4f, longLeg);
-
-        // Controls stay between their endpoints so the bending stroke keeps a clean trajectory.
         stroke.rewind();
-        stroke.moveTo(leftX, leftY);
-        stroke.cubicTo(
-                mix(leftX, kneeX, mix(.225f, 1f / 3f, straighten)),
-                mix(leftY, kneeY, mix(shoulder, 1f / 3f, straighten)),
-                mix(leftX, kneeX, mix(.60f, 2f / 3f, straighten)),
-                mix(leftY, kneeY, mix(1, 2f / 3f, straighten)),
-                kneeX, kneeY);
-        stroke.cubicTo(
-                mix(kneeX, tipX, mix(.40f, 1f / 3f, longLeg)),
-                mix(kneeY, tipY, longLeg / 3),
-                mix(kneeX, tipX, mix(.775f, 2f / 3f, longLeg)),
-                mix(kneeY, tipY, mix(1 - shoulder, 2f / 3f, longLeg)),
-                tipX, tipY);
-        paintLine(canvas, stroke, color, mix(2.1f, 2.6f, check), 1);
+        stroke.moveTo(-8, edge);
+        stroke.cubicTo(-6.2f, mix(edge, center, shoulder), -3.2f, center, 0, center);
+        stroke.cubicTo(3.2f, center, 6.2f, mix(center, edge, 1 - shoulder), 8, edge);
+        paintLine(canvas, stroke, color, 2.1f, opacity);
     }
 
     private void paintLine(Canvas canvas, Path path, int color, float width, float opacity) {
