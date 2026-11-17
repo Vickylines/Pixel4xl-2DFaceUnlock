@@ -6,14 +6,15 @@ import static com.yusd.pixel2dface.UnlockFaceAnimationView.SUCCESS;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Shader;
 
 /** Shared, density-independent artwork for the chooser and native lock screen. */
 final class LockscreenStyleRenderer {
-    static final long SUCCESS_MORPH_MS = 340L;
-    static final long FAILURE_MORPH_MS = 300L;
+    static final long SUCCESS_MORPH_MS = 360L;
+    static final long FAILURE_MORPH_MS = 340L;
     private static final int WHITE = 0xfff0f7ff;
     private static final int BLUE = 0xffa9d9ff;
     private static final int GREEN = 0xffa5edcf;
@@ -22,10 +23,13 @@ final class LockscreenStyleRenderer {
     private static final double TAU = Math.PI * 2;
     private static final float FOCUS_RING_RADIUS = 23.5f;
     private static final float FOCUS_STROKE = 2.15f;
+    private static final float RESULT_STROKE = 1.98f;
 
     private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path corner = new Path();
+    private final Path frame = new Path();
     private final Path stroke = new Path();
+    private final Matrix quarterTurn = new Matrix();
     private final LinearGradient cornerLight = new LinearGradient(-24, -24, -12, -12,
             new int[]{0xfff0f7ff, 0xcbc6e7ff, 0x00a9d9ff},
             new float[]{0, .26f, 1}, Shader.TileMode.CLAMP);
@@ -37,102 +41,134 @@ final class LockscreenStyleRenderer {
     }
 
     void draw(Canvas canvas, int state, float phase, float progress, boolean animated) {
-        float faceMorph = smooth(0, .83f, progress);
-        long duration = state == FAILURE ? FAILURE_MORPH_MS : SUCCESS_MORPH_MS;
+        boolean failed = state == FAILURE;
+        long duration = failed ? FAILURE_MORPH_MS : SUCCESS_MORPH_MS;
         // Continue from the last scanning frame at its speed, then decelerate to rest.
         float travel = progress * (1 - .5f * progress);
         float motionPhase = animated
                 ? phase + travel * duration / UnlockFaceAnimationView.SCAN_CYCLE_MS : 0;
-        float scanningLight = 1 - smooth(.12f, .92f, progress);
-        int outcome = state == FAILURE ? WARM : GREEN;
-        float resultColor = smooth(.04f, .78f, progress);
+        // The gap, mouth and final stroke weights settle on the same eased progress.
+        float joining = smooth(.02f, .97f, progress);
+        int outcome = failed ? WARM : GREEN;
+        float resultColor = smooth(0, failed ? .86f : .92f, joining);
         int color = blend(WHITE, outcome, resultColor);
         int accent = blend(BLUE, outcome, resultColor);
-        int saved = canvas.save();
-        if (state == FAILURE && animated) {
-            float shake = 1.4f * (float) (Math.sin(progress * TAU) * Math.sin(progress * Math.PI));
-            canvas.translate(shake, 0);
-        }
-        drawFrame(canvas, state, motionPhase, progress, scanningLight, color, accent);
-        drawFace(canvas, state, motionPhase, faceMorph, color);
-        canvas.restoreToCount(saved);
+        drawFrame(canvas, failed, motionPhase, progress, joining, color, accent);
+        drawFace(canvas, state, motionPhase, joining, color);
     }
 
-    private void drawFrame(Canvas canvas, int state, float phase, float progress,
-            float scanningLight, int color, int accent) {
-        float roundness = smooth(.22f, .88f, progress);
-        if (roundness == 1) {
-            // Draw one closed contour once the arcs meet to avoid overlapping end caps.
-            stroke.rewind();
-            stroke.addCircle(0, 0, FOCUS_RING_RADIUS, Path.Direction.CW);
-            paintLine(canvas, stroke, color, FOCUS_STROKE, 1);
+    private void drawFrame(Canvas canvas, boolean failed, float phase, float progress,
+            float joining, int color, int accent) {
+        float rounding = smooth(.02f, .81f, progress);
+        float width = mix(FOCUS_STROKE, RESULT_STROKE, joining);
+        frame.rewind();
+        if (joining == 1) {
+            frame.addCircle(0, 0, FOCUS_RING_RADIUS, Path.Direction.CW);
+            paintLine(canvas, frame, color, width, 1);
             return;
         }
 
+        float align = smooth(.04f, .49f, progress);
+        float reflection = (1 - smooth(.06f, .54f, progress)) * (1 - rounding);
+        float give = smooth(0, .23f, progress) * (1 - smooth(.28f, .72f, progress));
+        float spread = (failed ? 1.22f : -.90f) * give;
         for (int quarter = 0; quarter < 4; quarter++) {
-            boolean firstPair = quarter % 2 == 0;
             float catchLight = .5f + .5f * (float) Math.cos((phase - quarter * .25f) * TAU);
-            float settle = firstPair ? smooth(.03f, .52f, progress) : smooth(.14f, .64f, progress);
-            float inset = mix(.80f * catchLight, state == FAILURE ? -.85f : 1.55f, settle);
-            float half = mix(24 - inset, FOCUS_RING_RADIUS, roundness);
-            float radius = mix(10, half, roundness);
-            float tangent = radius - half;
-            // The opening shrinks with the straight sections as the corner becomes a quarter circle.
-            float tip = tangent * (10f / 14f);
-            float farEdge = tangent + radius;
-            corner.rewind();
-            corner.moveTo(tip, -half);
+            float scanInset = .80f * catchLight * (1 - align);
+            float half = mix(24 - scanInset, FOCUS_RING_RADIUS, rounding) + spread;
+            float radius = mix(10, half, rounding);
+            float gap = (half - 10) * (10f / 14f) * (1 - joining);
+            shapeCorner(half, radius, gap);
+
+            if (reflection > 0) {
+                int saved = canvas.save();
+                canvas.rotate(quarter * 90);
+                int edge = blend(color, accent, .34f * reflection * catchLight);
+                paintLine(canvas, corner, edge, width, mix(.90f, 1, align));
+                paintHighlight(canvas, corner, cornerLight, 1,
+                        reflection * (.20f + .73f * catchLight));
+                canvas.restoreToCount(saved);
+            } else {
+                quarterTurn.setRotate(quarter * 90);
+                frame.addPath(corner, quarterTurn);
+            }
+        }
+        // Paint the aligned arcs together so one end's shadow cannot cross another end.
+        if (reflection == 0) paintLine(canvas, frame, color, width, 1);
+    }
+
+    private void shapeCorner(float half, float radius, float gap) {
+        float tangent = radius - half;
+        float farEdge = tangent + radius;
+        corner.rewind();
+        if (gap <= -tangent) {
+            corner.moveTo(-gap, -half);
             corner.lineTo(tangent, -half);
             corner.arcTo(-half, -half, farEdge, farEdge, -90, -90, false);
-            corner.lineTo(-half, tip);
-
-            int saved = canvas.save();
-            canvas.rotate(quarter * 90);
-            float reflection = scanningLight * (1 - roundness);
-            int edge = blend(color, accent, .34f * reflection * catchLight);
-            paintLine(canvas, corner, edge, FOCUS_STROKE, .90f + .10f * settle);
-            paintHighlight(canvas, corner, cornerLight, 1, reflection * (.20f + .73f * catchLight));
-            canvas.restoreToCount(saved);
+            corner.lineTo(-half, -gap);
+        } else {
+            // When the straight section ends, keep closing by trimming the arc itself.
+            float trim = (float) Math.toDegrees((gap + tangent) / radius);
+            corner.arcTo(-half, -half, farEdge, farEdge, -90 - trim, -90 + 2 * trim, true);
         }
     }
 
-    private void drawFace(Canvas canvas, int state, float phase, float resolved, int color) {
-        float success = state == SUCCESS ? resolved : 0;
-        float failure = state == FAILURE ? resolved : 0;
-        float details = 1 - smooth(0, .68f, success);
+    private void drawFace(Canvas canvas, int state, float phase, float joining, int color) {
+        boolean accepted = state == SUCCESS;
+        float eyes = accepted ? smooth(.01f, .42f, joining) : 0;
+        float nose = accepted ? smooth(.025f, .50f, joining) : 0;
+        float frown = state == FAILURE ? joining : 0;
         float blink = smooth(.30f, .34f, phase) * (1 - smooth(.34f, .39f, phase));
-        float eyeHalfHeight = mix(1.65f, .50f, blink * (1 - resolved)) * (1 - success);
-        float eyeY = -6.05f + .60f * success;
+        float open = mix(1.65f, .50f, blink * (1 - joining));
+        float eyeHalfHeight = mix(open, .50f, eyes + .36f * frown);
+        float eyeY = -6.05f + .65f * eyes;
         stroke.rewind();
         stroke.moveTo(-7.2f, eyeY - eyeHalfHeight);
         stroke.lineTo(-7.2f, eyeY + eyeHalfHeight);
         stroke.moveTo(7.2f, eyeY - eyeHalfHeight);
         stroke.lineTo(7.2f, eyeY + eyeHalfHeight);
-        paintLine(canvas, stroke, color, 2.3f, details);
+        paintLine(canvas, stroke, color, 2.3f, 1 - eyes);
 
         stroke.rewind();
         stroke.moveTo(.7f, -5.8f);
         stroke.lineTo(.7f, 1.5f);
         stroke.quadTo(.7f, 3.6f, -1.5f, 3.6f);
         stroke.lineTo(-2.7f, 3.6f);
-        paintLine(canvas, stroke, color, 2.0f, details);
+        paintLine(canvas, stroke, color, 2.0f, 1 - nose);
 
-        // The smile itself becomes the check, with matching two-cubic topology.
-        // This stays connected instead of cross-fading a separate success symbol.
+        drawMouth(canvas, color, accepted ? joining : 0, frown);
+    }
+
+    private void drawMouth(Canvas canvas, int color, float check, float frown) {
+        // The short leg leads. The long leg follows the closing gap all the way to the finish.
+        float shortLeg = check * (1.60f - .60f * check);
+        float longLeg = check * (.54f + .46f * check);
+        float mouthEdge = mix(8, 9.6f, frown);
+        float mouthCenter = mix(11.5f, 7, frown);
+        float shoulder = mix(5f / 7f, .58f, frown);
+        float leftX = mix(-8, -9.5f, shortLeg);
+        float leftY = mix(mouthEdge, .6f, shortLeg);
+        float kneeX = mix(0, -3.8f, shortLeg);
+        float kneeY = mix(mouthCenter, 6.3f, shortLeg);
+        float tipX = mix(8, 10.9f, longLeg) + 2.6f * longLeg * (1 - longLeg);
+        float tipY = mix(mouthEdge, -8.4f, longLeg);
+
+        // Controls stay between their endpoints so the bending stroke keeps a clean trajectory.
         stroke.rewind();
-        float mouthEdge = 8 + 1.8f * failure;
-        float mouthShoulder = 10.5f - 2.3f * failure;
-        float mouthCenter = 11.5f - 4.2f * failure;
-        stroke.moveTo(mix(-8, -10, success), mix(mouthEdge, .5f, success));
+        stroke.moveTo(leftX, leftY);
         stroke.cubicTo(
-                mix(-6.2f, -8.5f, success), mix(mouthShoulder, 2, success),
-                mix(-3.2f, -6.8f, success), mix(mouthCenter, 4, success),
-                mix(0, -4.8f, success), mix(mouthCenter, 6, success));
+                mix(leftX, kneeX, mix(.225f, 1f / 3f, shortLeg)),
+                mix(leftY, kneeY, mix(shoulder, 1f / 3f, shortLeg)),
+                mix(leftX, kneeX, mix(.60f, 2f / 3f, shortLeg)),
+                mix(leftY, kneeY, mix(1, 2f / 3f, shortLeg)),
+                kneeX, kneeY);
         stroke.cubicTo(
-                mix(3.2f, -1, success), mix(mouthCenter, 2.2f, success),
-                mix(6.2f, 5, success), mix(mouthShoulder, -3.8f, success),
-                mix(8, 11, success), mix(mouthEdge, -9.2f, success));
-        paintLine(canvas, stroke, color, mix(2.1f, 2.7f, success), 1);
+                mix(kneeX, tipX, mix(.40f, 1f / 3f, longLeg)),
+                mix(kneeY, tipY, longLeg / 3),
+                mix(kneeX, tipX, mix(.775f, 2f / 3f, longLeg)),
+                mix(kneeY, tipY, mix(1 - shoulder, 2f / 3f, longLeg)),
+                tipX, tipY);
+        paintLine(canvas, stroke, color, mix(2.1f, 2.6f, check), 1);
     }
 
     private void paintLine(Canvas canvas, Path path, int color, float width, float opacity) {
