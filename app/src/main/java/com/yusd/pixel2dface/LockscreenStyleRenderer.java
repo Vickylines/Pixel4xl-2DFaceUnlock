@@ -51,13 +51,9 @@ final class LockscreenStyleRenderer {
                     focus ? 1.9f : 1.65f, .59f * frameOpacity);
         }
 
-        long duration = state == FAILURE ? FAILURE_MORPH_MS : SUCCESS_MORPH_MS;
-        // Match the speed of the scan at the handoff, then ease its velocity down to zero.
-        float runout = progress * (1 - .5f * progress);
-        float posePhase = animated ? phase + runout * duration / UnlockFaceAnimationView.SCAN_CYCLE_MS : 0;
         int outcome = state == FAILURE ? WARM : GREEN;
         int color = blend(PEARL, outcome, smooth(.09f, .82f, progress));
-        portrait.draw(canvas, focus, state, posePhase, progress, color, animated);
+        portrait.draw(canvas, focus, state, animated ? phase : 0, progress, color);
     }
 
     static Paint strokePaint() {
@@ -79,24 +75,16 @@ final class LockscreenStyleRenderer {
     }
 
     static float smooth(float start, float end, float value) {
-        float t = clamp((value - start) / (end - start));
+        float t = Math.max(0, Math.min(1, (value - start) / (end - start)));
         return t * t * (3 - 2 * t);
-    }
-
-    static float clamp(float value) {
-        return Math.max(0, Math.min(1, value));
     }
 
     static float mix(float from, float to, float amount) {
         return from + (to - from) * amount;
     }
 
-    static int alpha(float opacity) {
-        return Math.round(255 * clamp(opacity));
-    }
-
     private static int withAlpha(int color, float opacity) {
-        return (color & 0x00ffffff) | (alpha(opacity) << 24);
+        return (color & 0x00ffffff) | (Math.round(255 * opacity) << 24);
     }
 
     private static int blend(int from, int to, float amount) {

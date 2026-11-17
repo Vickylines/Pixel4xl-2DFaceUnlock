@@ -10,8 +10,8 @@ android {
         applicationId "com.yusd.pixel2dface"
         minSdk 29
         targetSdk 36
-        versionCode 46
-        versionName "0.13.16-motion"
+        versionCode 47
+        versionName "0.13.17-motion"
         manifestPlaceholders = [isXposedModule: "true"]
         testInstrumentationRunner project.hasProperty("uiReview")
                 ? "com.yusd.pixel2dface.UiReviewInstrumentation"
