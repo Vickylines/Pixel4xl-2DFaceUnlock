@@ -18,15 +18,13 @@ import java.lang.reflect.Field;
 
 /** Native artwork export, reachable only through the emulator-only review runner. */
 final class MotionArtworkReview {
-    static int export(Context context) throws Exception {
+    static void export(Context context) throws Exception {
         File folder = context.getExternalFilesDir("art-review");
         UnlockFaceAnimationView focus = new UnlockFaceAnimationView(context, AnimationStyle.FOCUS);
-        UnlockFaceAnimationView faceRing = new UnlockFaceAnimationView(context, AnimationStyle.FACE);
         float density = context.getResources().getDisplayMetrics().density;
         int width = Math.round(176 * density);
         int height = Math.round(88 * density);
         focus.layout(0, 0, width, height);
-        faceRing.layout(0, 0, width, height);
         Field scanPhase = UnlockFaceAnimationView.class.getDeclaredField("phase");
         scanPhase.setAccessible(true);
 
@@ -37,7 +35,6 @@ final class MotionArtworkReview {
         Canvas canvas = new Canvas(image);
         Canvas referenceCanvas = new Canvas(reference);
         int previous = SEARCHING;
-        int sharedFrames = 0;
         for (int frame = 0; frame < 360; frame++) {
             float seconds = frame / 60f;
             int state = seconds < 2.4f || (seconds >= 3.6f && seconds < 4.8f) ? SEARCHING
@@ -45,11 +42,10 @@ final class MotionArtworkReview {
             float scanSeconds = seconds >= 3.6f ? seconds - 3.6f : seconds;
             float phase = (scanSeconds * 1000 / UnlockFaceAnimationView.SCAN_CYCLE_MS) % 1f;
             scanPhase.setFloat(focus, phase);
-            scanPhase.setFloat(faceRing, phase);
             float progress = state == SEARCHING ? 0 : Math.min(1,
                     (seconds - (state == SUCCESS ? 2.4f : 4.8f)) * 1000
-                            / (state == SUCCESS ? UnlockFaceAnimationView.SUCCESS_MORPH_MS
-                            : UnlockFaceAnimationView.FAILURE_MORPH_MS));
+                            / (state == SUCCESS ? LockscreenStyleRenderer.SUCCESS_MORPH_MS
+                            : LockscreenStyleRenderer.FAILURE_MORPH_MS));
 
             boolean startingOutcome = state != SEARCHING && state != previous;
             if (startingOutcome) {
@@ -57,14 +53,11 @@ final class MotionArtworkReview {
                 draw(referenceCanvas, focus, density, 0);
                 if (state == SUCCESS) {
                     focus.showSuccess();
-                    faceRing.showSuccess();
                 } else {
                     focus.showFailure("");
-                    faceRing.showFailure("");
                 }
             } else if (state != previous) {
                 focus.restartSearching();
-                faceRing.restartSearching();
             }
             previous = state;
 
@@ -73,13 +66,10 @@ final class MotionArtworkReview {
             if (startingOutcome && !image.sameAs(reference)) {
                 throw new IllegalStateException("Focus jumped on its first outcome frame");
             }
-            if (state != SEARCHING && progress >= UnlockFaceAnimationView.FOCUS_HANDOFF_END) {
-                reference.eraseColor(Color.TRANSPARENT);
-                draw(referenceCanvas, faceRing, density, progress);
-                if (!image.sameAs(reference)) {
-                    throw new IllegalStateException("Focus differs from Face Ring at frame " + frame);
-                }
-                sharedFrames++;
+            if (state != SEARCHING && progress == 1
+                    && (Color.alpha(image.getPixel(312, 200)) != 0
+                    || Color.alpha(image.getPixel(264, 110)) != 0)) {
+                throw new IllegalStateException("Focus result gained a filled background or an outer rim");
             }
 
             label.setTextSize(32); label.setColor(0xffefbb66);
@@ -111,7 +101,6 @@ final class MotionArtworkReview {
         themed.draw(iconCanvas);
         write(icons,new File(folder,"adaptive-icons.png"));
         icons.recycle();
-        return sharedFrames;
     }
 
     private static void draw(Canvas canvas, UnlockFaceAnimationView view, float density,

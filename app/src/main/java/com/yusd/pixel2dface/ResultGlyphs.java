@@ -1,15 +1,18 @@
 package com.yusd.pixel2dface;
 
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.Path;
 
-/** The success stroke originally used by the Face Ring style. */
-final class SuccessCheckmark {
-    static final float STROKE_WIDTH = 2.8f;
+/** Check and cross strokes shared by Face Ring and Focus. */
+final class ResultGlyphs {
+    static final float CHECK_WIDTH = 2.8f;
+    static final float CROSS_WIDTH = 2.7f;
     private static final float CORNER_PROGRESS = .34f;
 
-    private SuccessCheckmark() { }
+    private ResultGlyphs() { }
 
-    static void trace(Path path, float cx, float cy, float scale, float progress) {
+    static void traceCheck(Path path, float cx, float cy, float scale, float progress) {
         float startX = cx - 8.1f * scale;
         float cornerX = cx - 1.9f * scale;
         float cornerY = cy + 6f * scale;
@@ -26,5 +29,12 @@ final class SuccessCheckmark {
             float local = (progress - CORNER_PROGRESS) / .66f;
             path.lineTo(cornerX + (tipX - cornerX) * local, cornerY + (tipY - cornerY) * local);
         }
+    }
+
+    static void drawCross(Canvas canvas, Paint paint, float cx, float cy, float scale,
+            float progress) {
+        float extent = 7.2f * scale * progress;
+        canvas.drawLine(cx - extent, cy - extent, cx + extent, cy + extent, paint);
+        canvas.drawLine(cx + extent, cy - extent, cx - extent, cy + extent, paint);
     }
 }
