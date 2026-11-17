@@ -4,10 +4,10 @@
 
 | 样式 | 识别过程 | 结果变化 |
 | --- | --- | --- |
-| 光幕 | 窄光带经过圆角方形中的面容 | 光带退去，面容连续变成勾 |
-| 星轨 | 两段细弧围绕正脸行进 | 弧线合成圆环，中心出现勾 |
-| 线条 | 面容轮廓有轻微明暗变化 | 轮廓淡出，嘴部线条转为勾 |
-| 聚焦 | 四角框围绕五官轻微呼吸 | 四角框收拢，嘴部线条转为勾 |
+| 光幕 | 斜光扫过玻璃和细边，交界处更亮 | 光带减速退去，玻璃映出淡绿 |
+| 星轨 | 两段弧光一前一后，沿圆环留下渐隐尾迹 | 尾迹消散，圆环收紧并亮起 |
+| 线条 | 五官和脸缘留出空隙，亮线沿额头和下颌游走 | 额头先淡出，下颌从两端向中间收笔 |
+| 聚焦 | 高光依次经过四个角 | 对角先后移动，四角拉成弧并合成圆环 |
 
 光幕、星轨、线条、聚焦对应样式编号 2–5，原点阵选择沿用编号 5。预览和锁屏共用 `LockscreenStyleRenderer`。
 
@@ -20,8 +20,8 @@
 
 ## 实现
 
-使用 Android Canvas、PathMeasure 和缓存的曲线与渐变。新样式在首帧显示面容，约 160 ms 完成入场。成功过渡 340 ms，失败 300 ms。识别流程与绘制分开运行，覆盖层移除时取消动画。
+使用 Android Canvas、PathMeasure 和缓存的曲线与渐变。新样式在首帧显示面容，约 160 ms 完成入场。成功过渡 340 ms，失败 300 ms，从当时的扫光位置自然减速。识别流程与绘制分开运行，覆盖层移除时取消动画。
 
-本轮参考 [Apple Motion](https://developer.apple.com/design/human-interface-guidelines/motion) 与 [Designing Fluid Interfaces](https://developer.apple.com/videos/play/wwdc2018/803/)，重点是简短反馈、形状连续和即时响应。
+扫光从当前速度接到结果过渡，五官、外圈和颜色先后收稳。过渡节奏参考 Apple 的 [Motion](https://developer.apple.com/design/human-interface-guidelines/motion) 与 [Animate with springs](https://developer.apple.com/videos/play/wwdc2023/10158/)。
 
 图标源文件位于 `assets/brand/`。图标由矢量曲线绘制，动效由原生代码绘制，均未使用 AI 生图。

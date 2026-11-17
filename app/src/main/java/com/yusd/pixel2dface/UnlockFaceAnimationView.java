@@ -23,6 +23,7 @@ public final class UnlockFaceAnimationView extends View {
     static final int SEARCHING = 0;
     static final int SUCCESS = 1;
     static final int FAILURE = 2;
+    static final long SCAN_CYCLE_MS = 2800L;
     private static final long SUCCESS_MORPH_MS = 680L;
     private static final long FAILURE_MORPH_MS = 580L;
 
@@ -84,7 +85,7 @@ public final class UnlockFaceAnimationView extends View {
         textPaint.setTextSize(sp(11.5f));
 
         ticker = ValueAnimator.ofFloat(0f, 1f);
-        ticker.setDuration(2800L);
+        ticker.setDuration(SCAN_CYCLE_MS);
         ticker.setRepeatCount(ValueAnimator.INFINITE);
         ticker.setInterpolator(new LinearInterpolator());
         ticker.addUpdateListener(value -> {

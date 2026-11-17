@@ -25,8 +25,9 @@ final class MotionArtworkReview {
             float seconds = frame / 30f;
             int state = seconds < 2.4f || (seconds >= 3.6f && seconds < 4.8f) ? 0
                     : seconds < 3.6f ? 1 : 2;
-            float phase = state == 1 ? 2.4f / 2.8f : state == 2 ? 1.2f / 2.8f
-                    : (seconds >= 3.6f ? seconds - 3.6f : seconds) / 2.8f;
+            float scanSeconds = state == 1 ? 2.4f : state == 2 ? 1.2f
+                    : seconds >= 3.6f ? seconds - 3.6f : seconds;
+            float phase = scanSeconds * 1000 / UnlockFaceAnimationView.SCAN_CYCLE_MS;
             float progress = state == 0 ? 0 : Math.min(1,
                     (seconds - (state == 1 ? 2.4f : 4.8f)) * 1000
                             / (state == 1 ? LockscreenStyleRenderer.SUCCESS_MORPH_MS
