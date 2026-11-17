@@ -13,7 +13,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import androidx.appcompat.app.AlertDialog;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.button.MaterialButtonToggleGroup;
 import com.google.android.material.card.MaterialCardView;
@@ -35,14 +34,15 @@ final class AnimationGallery {
         content.addView(states, Ui.space(context, 12, 18));
         MaterialCardView[] cards = new MaterialCardView[AnimationStyle.COUNT];
         TextView[] labels = new TextView[AnimationStyle.COUNT];
-        int[] pending = {selected};
-        int columns = context.getResources().getConfiguration().fontScale > 1.3f ? 2 : 3;
+        int[] pending = {AnimationStyle.positionOf(selected)};
+        int columns = 2;
         for (int row = 0; row < AnimationStyle.COUNT / columns; row++) {
             LinearLayout line = new LinearLayout(context);
             for (int column = 0; column < columns; column++) {
-                int style = row * columns + column;
+                int position = row * columns + column;
+                int style = AnimationStyle.at(position);
                 MaterialCardView card = new MaterialCardView(context);
-                cards[style] = card;
+                cards[position] = card;
                 card.setCheckable(true);
                 card.setClickable(true);
                 card.setFocusable(true);
@@ -61,15 +61,15 @@ final class AnimationGallery {
                 picture.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 tile.addView(picture, new LinearLayout.LayoutParams(-1, Ui.dp(context, 44)));
                 TextView label = Ui.text(context, AnimationStyle.name(style), 15, R.color.ink);
-                labels[style] = label;
+                labels[position] = label;
                 label.setGravity(Gravity.CENTER);
                 tile.addView(label, Ui.space(context, 6, 0));
                 card.addView(tile, new FrameLayout.LayoutParams(-1, -2));
-                updateSelection(context, card, label, style == selected);
+                updateSelection(context, card, label, position == pending[0]);
                 card.setOnClickListener(view -> {
-                    if (pending[0] == style) return;
+                    if (pending[0] == position) return;
                     updateSelection(context, cards[pending[0]], labels[pending[0]], false);
-                    pending[0] = style;
+                    pending[0] = position;
                     updateSelection(context, card, label, true);
                     preview.choose(style);
                     states.check(states.getChildAt(0).getId());
@@ -83,7 +83,7 @@ final class AnimationGallery {
         }
         new MaterialAlertDialogBuilder(context).setTitle("锁屏动画").setView(scroll)
                 .setNegativeButton("取消", null)
-                .setPositiveButton("使用", (dialog, which) -> onSelect.accept(pending[0])).show();
+                .setPositiveButton("使用", (dialog, which) -> onSelect.accept(AnimationStyle.at(pending[0]))).show();
     }
 
     private static void updateSelection(Context context, MaterialCardView card, TextView label, boolean selected) {

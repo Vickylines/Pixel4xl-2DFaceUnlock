@@ -149,7 +149,7 @@ public final class UnlockFaceAnimationView extends View {
             return;
         }
         resumeTicker();
-        boolean portraitStyle = visualStyle >= AnimationStyle.GLOW;
+        boolean portraitStyle = visualStyle >= AnimationStyle.MINIMAL;
         setAlpha(portraitStyle ? .76f : 0f);
         float initialScale = portraitStyle ? .97f : .94f;
         setScaleX(initialScale);
@@ -214,7 +214,7 @@ public final class UnlockFaceAnimationView extends View {
             canvas.translate(shake, 0f);
         }
 
-        if (visualStyle >= AnimationStyle.GLOW) {
+        if (visualStyle >= AnimationStyle.MINIMAL) {
             drawNewStyle(canvas, cx, cy, progress);
         } else if (visualStyle == STYLE_DYNAMIC_ISLAND) {
             float islandY = cy + dp(0.32f)
@@ -671,7 +671,7 @@ public final class UnlockFaceAnimationView extends View {
     private float transitionProgress() {
         if (!ValueAnimator.areAnimatorsEnabled()) return 1f;
         long duration = state == SUCCESS ? SUCCESS_MORPH_MS : FAILURE_MORPH_MS;
-        if (visualStyle >= AnimationStyle.GLOW) {
+        if (visualStyle >= AnimationStyle.MINIMAL) {
             duration = state == SUCCESS ? LockscreenStyleRenderer.SUCCESS_MORPH_MS
                     : LockscreenStyleRenderer.FAILURE_MORPH_MS;
         }

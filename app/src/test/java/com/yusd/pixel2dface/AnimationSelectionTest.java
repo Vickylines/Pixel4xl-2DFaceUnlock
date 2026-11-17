@@ -12,6 +12,7 @@ import android.provider.Settings;
 import android.view.View;
 import android.widget.FrameLayout;
 import java.time.Duration;
+import java.util.Properties;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -60,7 +61,8 @@ public final class AnimationSelectionTest {
         assertTrue(TemplateStore.saveIdentityModel(context,
                 new EmbeddingIdentity(EmbeddingIdentityTest.vector(0), .22f)));
         feedback.captureRoot(keyguard);
-        for (int style = 0; style < AnimationStyle.COUNT; style++) {
+        for (int position = 0; position < AnimationStyle.COUNT; position++) {
+            int style = AnimationStyle.at(position);
             assertTrue(TemplateStore.trySetAnimationStyle(context, style));
             Bundle state = provider.call("prepare_unlock", "synthetic-animation-session-00000" + style, null);
             assertTrue(state.getBoolean("ok"));
@@ -75,30 +77,45 @@ public final class AnimationSelectionTest {
             assertNotSame(keyguard, shown().getParent());
         }
     }
+    @Test public void storedRemovedStylesReturnToFaceRing() {
+        feedback.captureRoot(keyguard);
+        for (int removed : new int[]{2, 3}) {
+            assertTrue(AtomicStoreFiles.locked(context, false, directory -> {
+                Properties stored = AtomicStoreFiles.readProperties(context, directory);
+                stored.setProperty("animation_style", Integer.toString(removed));
+                AtomicStoreFiles.writeProperties(directory, stored);
+                return true;
+            }));
+            Bundle state = provider.call("state", null, null);
+            assertEquals(AnimationStyle.FACE, state.getInt("animation_style", -1));
+            feedback.scanning(state.getInt("animation_style"));
+            assertEquals(AnimationStyle.FACE, style());
+        }
+    }
     @Test public void wakeBeforeRootInflationIsReplayedWhenTheRootArrives() {
-        feedback.scanning(AnimationStyle.DOTS);
+        feedback.scanning(AnimationStyle.FOCUS);
         assertNull(shown());
         feedback.captureRoot(keyguard);
-        assertEquals(AnimationStyle.DOTS, style());
+        assertEquals(AnimationStyle.FOCUS, style());
     }
     @Test public void sleepCancelsAnAnimationWaitingForTheRoot() {
-        feedback.scanning(AnimationStyle.ORBIT);
+        feedback.scanning(AnimationStyle.FOCUS);
         feedback.remove();
         feedback.captureRoot(keyguard);
         assertNull(shown());
     }
     @Test public void replacedRootKeepsTheActiveStyleAndReleasesTheOldView() {
         feedback.captureRoot(keyguard);
-        feedback.scanning(AnimationStyle.GLOW);
+        feedback.scanning(AnimationStyle.MINIMAL);
         View previous = shown();
         feedback.captureRoot(root());
-        assertEquals(AnimationStyle.GLOW, style());
+        assertEquals(AnimationStyle.MINIMAL, style());
         assertNull(previous.getParent());
         assertTrue(shown().isAttachedToWindow());
     }
     @Test public void oldOutcomeCleanupCannotEraseANewerWake() {
         feedback.captureRoot(keyguard);
-        feedback.scanning(AnimationStyle.GLOW);
+        feedback.scanning(AnimationStyle.FOCUS);
         feedback.failure();
         feedback.scanning(AnimationStyle.MINIMAL);
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1100));
@@ -107,7 +124,7 @@ public final class AnimationSelectionTest {
     }
     @Test public void rotationRepositionsTheSameOverlay() {
         feedback.captureRoot(keyguard);
-        feedback.scanning(AnimationStyle.ORBIT);
+        feedback.scanning(AnimationStyle.FOCUS);
         View previous = shown();
         keyguard.layout(0, 0, 2280, 1080);
         assertSame(previous, shown());

@@ -9,7 +9,6 @@ import android.graphics.LinearGradient;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.PathMeasure;
 import android.graphics.Shader;
 import android.graphics.SweepGradient;
 
@@ -23,55 +22,30 @@ final class LockscreenStyleRenderer {
     private static final int WARM = 0xffffbaaa;
     private static final int INK = 0xff0b1320;
     private static final double TAU = Math.PI * 2;
+    private static final float OUTLINE_RING_RADIUS = 22f;
+    private static final float OUTLINE_RING_STROKE = 1.85f;
+    private static final float QUARTER_CIRCLE_CONTROL = .55228475f;
     private static final float FOCUS_RING_RADIUS = 23.5f;
     private static final float FOCUS_STROKE = 2.15f;
 
     private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path jaw = new Path();
     private final Path forehead = new Path();
     private final Path corner = new Path();
     private final Path stroke = new Path();
-    private final Path trimmedJaw = new Path();
-    private final Path tile = new Path();
-    private final Path tileInset = new Path();
-    private final PathMeasure jawMeasure;
     private final Matrix lightPosition = new Matrix();
-    private final LinearGradient surface = new LinearGradient(-21, -27, 19, 28,
-            new int[]{0xf0354358, 0xf01a2433, 0xf0111926},
-            new float[]{0, .48f, 1}, Shader.TileMode.CLAMP);
-    private final LinearGradient glassRim = new LinearGradient(-25, -24, 24, 25,
-            new int[]{0xbadcf1ff, 0x44b2c7e0, 0x695b7696}, null, Shader.TileMode.CLAMP);
-    private final LinearGradient light = new LinearGradient(0, -12, 0, 11,
-            new int[]{0x009ac6ff, 0x2a9ac6ff, 0x78e5f6ff, 0x38abd6ff, 0x009ac6ff},
-            new float[]{0, .40f, .57f, .66f, 1}, Shader.TileMode.CLAMP);
-    private final SweepGradient orbitLight = new SweepGradient(0, 0,
-            new int[]{0x00a9d9ff, 0x30a9d9ff, 0xc0a9d9ff, 0xfff0f7ff, 0x00a9d9ff,
-                    0x00a9d9ff, 0x369eccf6, 0xaac3e5ff, 0x00a9d9ff, 0x00a9d9ff},
-            new float[]{0, .08f, .20f, .246f, .275f, .53f, .62f, .695f, .72f, 1});
     private final SweepGradient contourLight = new SweepGradient(0, 0,
             new int[]{0x00a9d9ff, 0x54a9d9ff, 0xffe8f8ff, 0x00a9d9ff, 0x00a9d9ff},
             new float[]{0, .105f, .197f, .27f, 1});
     private final LinearGradient cornerLight = new LinearGradient(-24, -24, -12, -12,
             new int[]{0xfff0f7ff, 0xcbc6e7ff, 0x00a9d9ff},
             new float[]{0, .26f, 1}, Shader.TileMode.CLAMP);
+    private float outlineRoundness = -1;
 
     LockscreenStyleRenderer() {
         line.setStyle(Paint.Style.STROKE);
         line.setStrokeCap(Paint.Cap.ROUND);
         line.setStrokeJoin(Paint.Join.ROUND);
-        tile.addRoundRect(-26, -26, 26, 26, 17, 17, Path.Direction.CW);
-        tileInset.addRoundRect(-24.4f, -24.4f, 24.4f, 24.4f, 15.4f, 15.4f, Path.Direction.CW);
-
-        // A rounded face silhouette reads at lock-screen size without a filled mask.
-        jaw.moveTo(-23, -7.2f);
-        jaw.lineTo(-23, 4.2f);
-        jaw.cubicTo(-23, 18, -12, 27.8f, 0, 27.8f);
-        jaw.cubicTo(12, 27.8f, 23, 18, 23, 4.2f);
-        jaw.lineTo(23, -7.2f);
-        jawMeasure = new PathMeasure(jaw, false);
-        forehead.moveTo(-19.8f, -17.2f);
-        forehead.cubicTo(-13, -29.5f, 13, -29.5f, 19.8f, -17.2f);
     }
 
     void draw(Canvas canvas, int style, int state, float phase, float progress) {
@@ -91,16 +65,10 @@ final class LockscreenStyleRenderer {
             canvas.translate(shake, 0);
         }
         switch (style) {
-            case AnimationStyle.GLOW:
-                drawCurtain(canvas, motionPhase, progress, scanningLight, accent);
-                break;
-            case AnimationStyle.ORBIT:
-                drawOrbit(canvas, state, motionPhase, progress, scanningLight, accent);
-                break;
             case AnimationStyle.MINIMAL:
-                drawOutline(canvas, state, motionPhase, progress, scanningLight, color);
+                drawOutline(canvas, motionPhase, progress, scanningLight, color);
                 break;
-            case AnimationStyle.DOTS:
+            case AnimationStyle.FOCUS:
                 drawFocus(canvas, state, motionPhase, progress, scanningLight, color, accent);
                 break;
             default:
@@ -110,82 +78,57 @@ final class LockscreenStyleRenderer {
         canvas.restoreToCount(saved);
     }
 
-    private void drawCurtain(Canvas canvas, float phase, float progress, float scanningLight,
-            int accent) {
-        fill.setShader(surface);
-        fill.setAlpha(255);
-        canvas.drawPath(tile, fill);
-        fill.setShader(null);
-        fill.setColor(tint(accent, .10f * smooth(.23f, .85f, progress)));
-        canvas.drawPath(tile, fill);
-
-        paintLine(canvas, tile, accent, .9f, .34f + .24f * progress);
-        paintHighlight(canvas, tile, glassRim, 1.0f, .82f);
-        setLine(WHITE, .56f, .13f);
-        canvas.drawPath(tileInset, line);
-        if (scanningLight > 0) {
-            // One light hits the surface and its rim at the same point.
-            float sweep = -.5f * (float) Math.cos(phase * TAU);
-            lightPosition.setRotate(-16);
-            lightPosition.postTranslate(0, 61 * sweep);
-            light.setLocalMatrix(lightPosition);
-            fill.setShader(light);
-            fill.setAlpha(alpha(.76f * scanningLight));
-            canvas.drawPath(tile, fill);
-            fill.setShader(null);
-            paintHighlight(canvas, tile, light, 1.8f, scanningLight);
+    private void drawOutline(Canvas canvas, float phase, float progress, float scanningLight,
+            int color) {
+        float rounding = smooth(.08f, .9f, progress);
+        if (rounding == 1) {
+            drawResultRing(canvas, OUTLINE_RING_RADIUS, color, OUTLINE_RING_STROKE);
+            return;
         }
-    }
-
-    private void drawOrbit(Canvas canvas, int state, float phase, float progress,
-            float scanningLight, int accent) {
-        float joined = smooth(.13f, .88f, progress);
-        float radius = mix(27, state == FAILURE ? 26 : 25, joined);
-        stroke.rewind();
-        stroke.addCircle(0, 0, radius - 2.55f, Path.Direction.CW);
-        setLine(accent, .56f, .15f * scanningLight);
-        canvas.drawPath(stroke, line);
-
-        stroke.rewind();
-        stroke.addCircle(0, 0, radius, Path.Direction.CW);
-        float rimOpacity = mix(.31f, state == FAILURE ? .57f : .90f, joined);
-        paintLine(canvas, stroke, accent, mix(1.45f, 1.95f, joined), rimOpacity);
-        if (scanningLight > 0) {
-            lightPosition.setRotate(phase * 360 - 144);
-            orbitLight.setLocalMatrix(lightPosition);
-            paintHighlight(canvas, stroke, orbitLight, 4.5f, .19f * scanningLight);
-            paintHighlight(canvas, stroke, orbitLight, 1.85f, scanningLight);
-        }
-    }
-
-    private void drawOutline(Canvas canvas, int state, float phase, float progress,
-            float scanningLight, int color) {
-        float gather = state == SUCCESS ? smooth(.02f, .83f, progress) : 0;
-        float opacity = 1 - smooth(.22f, 1, gather);
-        float browOpacity = 1 - smooth(0, .62f, gather);
-        paintLine(canvas, forehead, color, 1.75f, .83f * browOpacity);
-
-        Path outline = jaw;
-        if (gather > 0) {
-            float length = jawMeasure.getLength();
-            float trim = .35f * gather * length;
-            trimmedJaw.rewind();
-            jawMeasure.getSegment(trim, length - trim, trimmedJaw, true);
-            outline = trimmedJaw;
-        }
-        int saved = canvas.save();
-        canvas.translate(0, -4.5f * gather);
-        paintLine(canvas, outline, color, 1.9f, .90f * opacity);
+        shapeOutline(rounding);
+        paintLine(canvas, forehead, color, mix(1.75f, OUTLINE_RING_STROKE, rounding),
+                mix(.83f, 1, rounding));
+        paintLine(canvas, jaw, color, mix(1.9f, OUTLINE_RING_STROKE, rounding),
+                mix(.90f, 1, rounding));
         if (scanningLight > 0) {
             lightPosition.setRotate(phase * 360 - 155);
             contourLight.setLocalMatrix(lightPosition);
-            paintHighlight(canvas, outline, contourLight, 3.25f, .26f * scanningLight * opacity);
-            paintHighlight(canvas, outline, contourLight, 1.8f, .87f * scanningLight * opacity);
+            float reflection = scanningLight * (1 - rounding);
+            paintHighlight(canvas, jaw, contourLight, 3.25f, .26f * reflection);
+            paintHighlight(canvas, jaw, contourLight, 1.8f, .87f * reflection);
+            paintHighlight(canvas, forehead, contourLight, 1.7f, .85f * reflection);
         }
-        canvas.restoreToCount(saved);
-        if (scanningLight > 0) {
-            paintHighlight(canvas, forehead, contourLight, 1.7f, .85f * scanningLight * browOpacity);
-        }
+    }
+
+    private void shapeOutline(float rounding) {
+        if (rounding == outlineRoundness) return;
+        outlineRoundness = rounding;
+        float radius = OUTLINE_RING_RADIUS;
+        float tangent = radius * QUARTER_CIRCLE_CONTROL;
+        float cheek = mix(24.5f, radius, rounding);
+        float tipY = mix(-7.5f, 0, rounding);
+        float cheekY = mix(5, 0, rounding);
+        float chin = mix(29.5f, radius, rounding);
+        float jawControlX = mix(12.6f, tangent, rounding);
+        float jawControlY = mix(19.3f, tangent, rounding);
+        jaw.rewind();
+        jaw.moveTo(-cheek, tipY);
+        jaw.lineTo(-cheek, cheekY);
+        jaw.cubicTo(-cheek, jawControlY, -jawControlX, chin, 0, chin);
+        jaw.cubicTo(jawControlX, chin, cheek, jawControlY, cheek, cheekY);
+        jaw.lineTo(cheek, tipY);
+
+        // Matching quarter-curve control points let the two contours meet with a shared tangent.
+        float temple = mix(21, radius, rounding);
+        float templeY = mix(-18, 0, rounding);
+        float crown = mix(-28.35f, -radius, rounding);
+        float templeControlX = mix(17.4f, radius, rounding);
+        float templeControlY = mix(-24.9f, -tangent, rounding);
+        float crownControlX = mix(8.7f, tangent, rounding);
+        forehead.rewind();
+        forehead.moveTo(-temple, templeY);
+        forehead.cubicTo(-templeControlX, templeControlY, -crownControlX, crown, 0, crown);
+        forehead.cubicTo(crownControlX, crown, templeControlX, templeControlY, temple, templeY);
     }
 
     private void drawFocus(Canvas canvas, int state, float phase, float progress,
@@ -193,9 +136,7 @@ final class LockscreenStyleRenderer {
         float roundness = smooth(.22f, .88f, progress);
         if (roundness == 1) {
             // Draw one closed contour once the arcs meet to avoid overlapping end caps.
-            stroke.rewind();
-            stroke.addCircle(0, 0, FOCUS_RING_RADIUS, Path.Direction.CW);
-            paintLine(canvas, stroke, color, FOCUS_STROKE, 1);
+            drawResultRing(canvas, FOCUS_RING_RADIUS, color, FOCUS_STROKE);
             return;
         }
 
@@ -224,6 +165,12 @@ final class LockscreenStyleRenderer {
             paintHighlight(canvas, corner, cornerLight, 1, reflection * (.20f + .73f * catchLight));
             canvas.restoreToCount(saved);
         }
+    }
+
+    private void drawResultRing(Canvas canvas, float radius, int color, float width) {
+        stroke.rewind();
+        stroke.addCircle(0, 0, radius, Path.Direction.CW);
+        paintLine(canvas, stroke, color, width, 1);
     }
 
     private void drawFace(Canvas canvas, int state, float phase, float resolved, int color) {

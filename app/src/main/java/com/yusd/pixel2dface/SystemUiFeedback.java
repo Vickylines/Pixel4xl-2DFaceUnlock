@@ -124,7 +124,7 @@ final class SystemUiFeedback {
             if (shown != null) {
                 shown.showSuccess();
                 main.postDelayed(() -> dismissIfCurrent(shown),
-                        style >= AnimationStyle.GLOW ? 500L : 800L);
+                        style >= AnimationStyle.MINIMAL ? 500L : 800L);
             }
         });
     }
