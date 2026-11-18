@@ -19,15 +19,19 @@ final class FaceFrameExtractor {
         workspace = neural ? null : new LbpDescriptor.Workspace();
         rgb = neural ? new AlignedRgbSampler() : null;
         neuralInput = neural ? MobileFaceEmbedder.allocateInput() : null;
+        if (neuralInput != null) neuralInput.limit(0);
     }
 
     void clear() {
         if (neuralInput == null) return;
+        rgb.clear();
         neuralInput.clear();
         while (neuralInput.hasRemaining()) neuralInput.putFloat(0f);
+        neuralInput.position(0).limit(0);
     }
 
     Result extract(ImageProxy frame, int rotation, List<Face> faces) {
+        if (neuralInput != null) neuralInput.position(0).limit(0);
         if (faces == null || faces.size() != 1) {
             return Result.reject(faces == null || faces.isEmpty()
                     ? FrameQualityPolicy.Reason.NO_FACE : FrameQualityPolicy.Reason.MULTIPLE_FACES);
@@ -91,7 +95,9 @@ final class FaceFrameExtractor {
             sample = new FrameQualityPolicy.Sample(1, leftProbability, rightProbability,
                     leftContour, rightContour, sample.yaw, sample.pitch, sample.roll, size,
                     offsetX, offsetY, rgb.brightness, rgb.contrast, rgb.sharpness);
-            return new Result(FrameQualityPolicy.problem(sample), sample, null, geometry);
+            problem = FrameQualityPolicy.problem(sample);
+            if (problem != FrameQualityPolicy.Reason.NONE) neuralInput.limit(0);
+            return new Result(problem, sample, null, geometry);
         }
         float[] texture = workspace.compute(frame, rotation, crop, left, right);
         sample = new FrameQualityPolicy.Sample(1, leftProbability, rightProbability,

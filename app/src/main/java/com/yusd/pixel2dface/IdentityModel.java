@@ -149,25 +149,17 @@ final class IdentityModel implements IdentityTemplate {
 
     @Override public float maximumThreshold() { return textureThreshold; }
     @Override public float minimumThreshold() { return 0.24f; }
-    @Override public boolean validSample(float[] descriptor, float[] geometry) {
-        return validLiveInputs(descriptor, geometry);
-    }
     @Override public IdentityEvidence evaluate(float[] descriptor, float[] geometry, float threshold) {
         Match match = compare(descriptor, geometry, threshold);
+        if (match == Match.INVALID) return IdentityEvidence.INVALID;
         return new IdentityEvidence(match.textureScore, match.accepted,
                 match.isHighConfidence(threshold, geometryThreshold));
     }
 
     Match compare(float[] texture, float[] geometry, float activeTextureThreshold) {
-        if (!validLiveInputs(texture, geometry)) return Match.rejected();
-        return compareValidated(texture, geometry, activeTextureThreshold);
-    }
-
-    /** Engine already checked histogram mass and geometry before advancing any evidence. */
-    Match compareValidated(float[] texture, float[] geometry, float activeTextureThreshold) {
         if (!Float.isFinite(activeTextureThreshold) || activeTextureThreshold <= 0f
-                || activeTextureThreshold > textureThreshold) {
-            return Match.rejected();
+                || activeTextureThreshold > textureThreshold || !validLiveInputs(texture, geometry)) {
+            return Match.INVALID;
         }
         double weightedSum = 0d;
         int consistentCells = 0;
@@ -285,6 +277,8 @@ final class IdentityModel implements IdentityTemplate {
     }
 
     static final class Match {
+        private static final Match INVALID = new Match(Float.MAX_VALUE, Float.MAX_VALUE,
+                Float.MAX_VALUE, 0, 0, false);
         final float textureScore;
         final float geometryScore;
         final float geometryPeak;
@@ -300,11 +294,6 @@ final class IdentityModel implements IdentityTemplate {
             this.consistentCells = consistentCells;
             this.consistentCoreCells = consistentCoreCells;
             this.accepted = accepted;
-        }
-
-        static Match rejected() {
-            return new Match(Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE, 0, 0,
-                    false);
         }
 
         boolean isHighConfidence(float activeThreshold, float geometryThreshold) {

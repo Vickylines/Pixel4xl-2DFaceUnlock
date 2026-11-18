@@ -23,6 +23,10 @@ final class NeuralInstrumentationChecks {
             require(EmbeddingIdentity.validVector(first), "finite unit embedding"); checks++;
             float[] repeated = model.embed(input);
             require(EmbeddingIdentity.distance(first, repeated) < 0.00001f, "repeatable inference"); checks++;
+            input.limit(0);
+            boolean incomplete = false;
+            try { model.embed(input); } catch (IllegalArgumentException expected) { incomplete = true; }
+            require(incomplete, "unpublished sampler output cannot reach inference"); checks++;
             fill(input, 1);
             require(EmbeddingIdentity.distance(first, model.embed(input)) > .0001f, "input affects output"); checks++;
             long[] times = new long[30];

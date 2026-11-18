@@ -1,6 +1,7 @@
 package com.yusd.pixel2dface;
 
 import android.graphics.ImageFormat;
+import android.graphics.Rect;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
 import com.google.mlkit.vision.common.InputImage;
@@ -35,7 +36,19 @@ final class SingleFaceDetector implements AutoCloseable {
         return Tasks.whenAllComplete(executor, counted, detailed).continueWith(executor, completed -> {
             List<Face> faces = counted.getResult(Exception.class);
             List<Face> contours = detailed.getResult(Exception.class);
-            return closing.getAsBoolean() || faces.size() != 1 ? faces : contours;
+            if (closing.getAsBoolean()) return List.of();
+            if (faces.size() != 1) return faces;
+            if (contours.size() == 1) {
+                Rect countBox = faces.get(0).getBoundingBox();
+                Rect detailBox = contours.get(0).getBoundingBox();
+                // Tolerate different box sizes, but require both readers to localize
+                // the same subject. Two distinct candidates break single-face continuity.
+                if (!countBox.contains(detailBox.centerX(), detailBox.centerY())
+                        || !detailBox.contains(countBox.centerX(), countBox.centerY())) {
+                    return List.of(faces.get(0), contours.get(0));
+                }
+            }
+            return contours;
         });
     }
 

@@ -42,11 +42,13 @@ final class MobileFaceEmbedder implements AutoCloseable {
     }
 
     static ByteBuffer allocateInput() {
-        return ByteBuffer.allocateDirect(112 * 112 * 3 * Float.BYTES).order(ByteOrder.nativeOrder());
+        return ByteBuffer.allocateDirect(AlignedRgbSampler.RGB_BYTES).order(ByteOrder.nativeOrder());
     }
 
     float[] embed(ByteBuffer input) {
         if (interpreter == null) throw new IllegalStateException("Face model is closed");
+        if (input == null || input.limit() != AlignedRgbSampler.RGB_BYTES)
+            throw new IllegalArgumentException("Incomplete face tensor");
         input.rewind();
         interpreter.run(input, output);
         return EmbeddingIdentity.normalize(output[0]);

@@ -23,12 +23,9 @@ final class EmbeddingIdentity implements IdentityTemplate {
 
     @Override public float maximumThreshold() { return threshold; }
     @Override public float minimumThreshold() { return 0.10f; }
-    @Override public boolean validSample(float[] descriptor, float[] geometry) {
-        return validVector(descriptor);
-    }
     @Override public IdentityEvidence evaluate(float[] descriptor, float[] geometry, float limit) {
         if (!validVector(descriptor) || !Float.isFinite(limit) || limit < minimumThreshold()
-                || limit > threshold) return IdentityEvidence.rejected();
+                || limit > threshold) return IdentityEvidence.INVALID;
         float score = distance(centroid, descriptor);
         // The candidate backend deliberately uses the ordinary five-observation path.
         // A four-frame path needs device-specific accuracy/false-accept calibration first.

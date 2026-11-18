@@ -59,8 +59,11 @@ public final class SingleFaceDetectorTest {
         assertFalse(task.isComplete());
         detail.result.setResult(List.of(face(0)));
         assertTrue(task.getResult().isEmpty());
-        assertEquals(FrameQualityPolicy.Reason.NO_FACE,
-                new FaceFrameExtractor(false).extract(null, 0, task.getResult()).reason);
+        FaceFrameExtractor extractor = new FaceFrameExtractor(true);
+        assertEquals(0, extractor.neuralInput.remaining());
+        extractor.neuralInput.clear(); // Tensor from a preceding valid frame.
+        assertEquals(FrameQualityPolicy.Reason.NO_FACE, extractor.extract(null, 0, task.getResult()).reason);
+        assertEquals(0, extractor.neuralInput.remaining());
     }
 
     @Test public void oneFaceWaitsForDetailsFromTheSameImage() {
@@ -85,6 +88,23 @@ public final class SingleFaceDetectorTest {
         assertSame(failure, task.getException());
     }
 
+    @Test public void differentSingleFaceLocationsBreakSingleFaceContinuity() {
+        Task<List<Face>> task = detector.process(image);
+        population.result.setResult(List.of(face(0)));
+        // A small overlap between boxes still leaves their centers on different subjects.
+        detail.result.setResult(List.of(face(100)));
+        assertEquals(FrameQualityPolicy.Reason.MULTIPLE_FACES,
+                new FaceFrameExtractor(false).extract(null, 0, task.getResult()).reason);
+    }
+
+    @Test public void sameFaceWithDifferentLocalizationStillUsesDetailedMeasurements() {
+        Task<List<Face>> task = detector.process(image);
+        List<Face> detailed = List.of(face(12));
+        detail.result.setResult(detailed);
+        population.result.setResult(List.of(face(0)));
+        assertSame(detailed, task.getResult());
+    }
+
     @Test public void contourFailureCannotReturnTheCountOnlyFace() {
         Task<List<Face>> task = detector.process(image);
         population.result.setResult(List.of(face(0)));
@@ -101,6 +121,7 @@ public final class SingleFaceDetectorTest {
         assertFalse(task.isComplete());
         detail.result.setResult(List.of(face(0)));
         assertTrue(task.isComplete());
+        assertTrue(task.getResult().isEmpty());
         detector.close();
         assertTrue(population.closed);
         assertTrue(detail.closed);

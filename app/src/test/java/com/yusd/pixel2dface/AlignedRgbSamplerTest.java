@@ -45,6 +45,75 @@ public final class AlignedRgbSamplerTest {
                 plane(1, 128), 64, 1, plane(4096, 128), 64, 1, 128, 128, 0,
                 FaceAlignment.fit(FaceAlignment.CANONICAL), output));
         assertTrue(Float.isNaN(sampler.brightness));
+        assertEquals(0, output.remaining());
+        sample(100, 128, 128, 0);
+    }
+
+    @Test public void croppedChromaAtEveryImageEdgeMatchesTheClampedScalarReader() {
+        for (int width : new int[]{112, 113}) {
+            int height = 112, cWidth = (width + 1) / 2, cHeight = height / 2;
+            ByteBuffer y = pattern(width, height, width + 3, 1, 7);
+            ByteBuffer u = pattern(cWidth, cHeight, cWidth * 2 + 1, 2, 23);
+            ByteBuffer v = pattern(cWidth, cHeight, cWidth + 5, 1, 71);
+            LumaPlane py = new LumaPlane(), pu = new LumaPlane(), pv = new LumaPlane();
+            py.bind(y, width, height, width + 3, 1);
+            pu.bind(u, cWidth, cHeight, cWidth * 2 + 1, 2);
+            pv.bind(v, cWidth, cHeight, cWidth + 5, 1);
+            for (int rotation : new int[]{0, 90, 180, 270}) {
+                assertTrue(sampler.sample(y, width + 3, 1, u, cWidth * 2 + 1, 2,
+                        v, cWidth + 5, 1, width, height, rotation,
+                        FaceAlignment.fit(FaceAlignment.CANONICAL), output));
+                for (int row : new int[]{0, 1, 57, 110, 111}) {
+                    for (int col : new int[]{0, 1, 55, 110, 111}) {
+                        float x = AlignedRgbSampler.rawX(col, row, width, rotation);
+                        float yy = AlignedRgbSampler.rawY(col, row, height, rotation);
+                        float luma = 1.164383f * (py.sample(x, yy) - 16f);
+                        float cb = pu.sample(x * .5f, yy * .5f) - 128f;
+                        float cr = pv.sample(x * .5f, yy * .5f) - 128f;
+                        int offset = (row * 112 + col) * 3 * Float.BYTES;
+                        assertEquals(channel(luma + 1.596027f * cr), output.getFloat(offset), 0f);
+                        assertEquals(channel(luma - .391762f * cb - .812968f * cr),
+                                output.getFloat(offset + 4), 0f);
+                        assertEquals(channel(luma + 2.017232f * cb), output.getFloat(offset + 8), 0f);
+                    }
+                }
+                assertEquals(3, y.position()); assertEquals(3, u.position()); assertEquals(3, v.position());
+            }
+        }
+    }
+
+    private static float channel(float value) {
+        return (Math.max(0, Math.min(255, value)) - 127.5f) / 128f;
+    }
+
+    private static ByteBuffer pattern(int width, int height, int stride, int pixel, int seed) {
+        ByteBuffer bytes = ByteBuffer.allocateDirect(3 + (height - 1) * stride + (width - 1) * pixel + 1);
+        for (int y = 0; y < height; y++) for (int x = 0; x < width; x++)
+            bytes.put(3 + y * stride + x * pixel, (byte) (x * seed + y * 13));
+        bytes.position(3);
+        return bytes;
+    }
+
+    @Test public void largeCropUsesTheSamePixelsAndRecoversAfterAnIncompletePlane() {
+        int side = 640;
+        ByteBuffer y = pattern(side, side, side, 1, 7);
+        ByteBuffer chroma = plane(side * side / 4, 128);
+        float[] points = FaceAlignment.CANONICAL.clone();
+        for (int i = 0; i < points.length; i++) points[i] = points[i] * 5f + 8f;
+        FaceAlignment fit = FaceAlignment.fit(points);
+        assertThrows(IllegalArgumentException.class, () -> sampler.sample(y, side, 1, plane(1, 128),
+                side / 2, 1, chroma, side / 2, 1, side, side, 0, fit, output));
+        assertEquals(0, output.remaining());
+        assertTrue(sampler.sample(y, side, 1, chroma, side / 2, 1, chroma, side / 2, 1,
+                side, side, 0, fit, output));
+        LumaPlane reference = new LumaPlane();
+        reference.bind(y, side, side, side, 1);
+        for (int col = 0; col < 112; col++) {
+            int row = 111 - col;
+            float luma = reference.sample(fit.x(col, row), fit.y(col, row));
+            assertEquals(channel(1.164383f * (luma - 16)), output.getFloat((row * 112 + col) * 12), 0f);
+        }
+        sample(100, 128, 128, 0);
     }
 
     @Test public void rectangularTexturedFramesProduceIdenticalCropsInAllFourDirections() {

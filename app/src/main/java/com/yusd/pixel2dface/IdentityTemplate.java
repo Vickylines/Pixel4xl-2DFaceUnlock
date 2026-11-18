@@ -4,6 +4,6 @@ package com.yusd.pixel2dface;
 interface IdentityTemplate {
     float maximumThreshold();
     float minimumThreshold();
-    boolean validSample(float[] descriptor, float[] geometry);
+    /** Validate the descriptor before scoring. Invalid input returns IdentityEvidence.INVALID. */
     IdentityEvidence evaluate(float[] descriptor, float[] geometry, float threshold);
 }

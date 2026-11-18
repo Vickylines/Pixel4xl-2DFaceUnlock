@@ -18,6 +18,8 @@ import com.google.mlkit.vision.face.FaceDetector;
 import com.google.mlkit.vision.face.FaceLandmark;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -28,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 /** Native pipeline comparison using a public-domain fixture, never the device enrollment. */
 final class CapturePipelineChecks {
     static void run(Context testContext, Context targetContext, Bundle result) throws Exception {
+        AlignedSamplingChecks.run(result);
         Bitmap source;
         try (InputStream stream = testContext.getAssets().open("astronaut.png")) {
             source = BitmapFactory.decodeStream(stream);
@@ -61,11 +64,15 @@ final class CapturePipelineChecks {
             Face upright = await(joined.process(image)).get(0);
             require(upright.getAllContours().size() > 0, "native contour results");
             require(upright.getAllLandmarks().size() > 0, "native landmark results");
-            int independentDirections = 0, maximumSearchFrames = 0;
+            int independentDirections = 0, maximumSearchFrames = 0, totalSearchFrames = 0;
+            int reacquisitionFrames = 0;
             for (int correction : new int[]{0, 90, 180, 270}) {
                 Matrix rotate = new Matrix(); rotate.postRotate((360 - correction) % 360);
                 Bitmap raw = Bitmap.createBitmap(portrait, 0, 0, portrait.getWidth(),
                         portrait.getHeight(), rotate, false);
+                Matrix quarterTurn = new Matrix();
+                quarterTurn.postRotate(-90);
+                Bitmap turned = Bitmap.createBitmap(raw, 0, 0, raw.getWidth(), raw.getHeight(), quarterTurn, false);
                 for (int gravity : new int[]{0, 90, 180, 270}) {
                     DetectionOrientation direction = new DetectionOrientation();
                     boolean found = false;
@@ -78,6 +85,7 @@ final class CapturePipelineChecks {
                                     + correction + "/" + gravity + " selected " + selected);
                             sameFace(upright, faces.get(0), true);
                             maximumSearchFrames = Math.max(maximumSearchFrames, frame);
+                            totalSearchFrames += frame;
                             found = true;
                             for (int stable = 0; stable < 5; stable++) {
                                 require(direction.rotationFor(gravity) == correction, "stable capture direction");
@@ -87,12 +95,31 @@ final class CapturePipelineChecks {
                         }
                     }
                     require(found, "bedtime direction found " + correction + "/" + gravity);
+                    // Turn the phone by 90 degrees with the person's posture held constant.
+                    boolean reacquired = false;
+                    for (int frame = 1; frame <= 4; frame++) {
+                        int selected = direction.rotationFor((gravity + 90) % 360);
+                        List<Face> faces = await(joined.process(InputImage.fromBitmap(turned, selected)));
+                        float roll = faces.size() == 1 ? faces.get(0).getHeadEulerAngleZ() : 0;
+                        direction.observe(faces.size(), roll);
+                        if (faces.size() == 1 && Math.abs(roll) <= FrameQualityPolicy.MAX_ABS_ROLL) {
+                            require(selected == (correction + 90) % 360, "face direction after quarter turn");
+                            reacquisitionFrames += frame;
+                            reacquired = true;
+                            break;
+                        }
+                    }
+                    require(reacquired, "reacquire after turning phone");
                     independentDirections++;
                 }
+                turned.recycle();
                 if (raw != portrait) raw.recycle();
             }
             result.putInt("faceGravityCombinationsPassed", independentDirections);
             result.putInt("maximumDirectionSearchFrames", maximumSearchFrames);
+            result.putInt("totalDirectionSearchFrames", totalSearchFrames);
+            result.putInt("quarterTurnReacquisitionFrames", reacquisitionFrames);
+            checkTiltedDirections(portrait, joined, result);
             int orientations = 0;
             float maximumContourDelta = 0;
             for (int correction : new int[]{0, 90, 180, 270}) {
@@ -129,7 +156,7 @@ final class CapturePipelineChecks {
             result.putInt("multipleFaceOrientationsRejected", 4);
             result.putInt("comparedDetectorFrames", 28);
             result.putInt("detectorOutputMismatches", 0);
-            compareVerification(targetContext, joined, image, portrait, upright, result);
+            compareVerification(targetContext, joined, portrait, result);
         } finally { portrait.recycle(); }
         String[] names = {"sequential", "parallel"};
         for (int lane = 0; lane < 2; lane++) {
@@ -139,16 +166,41 @@ final class CapturePipelineChecks {
         }
     }
 
+    private static void checkTiltedDirections(Bitmap portrait, SingleFaceDetector detector,
+            Bundle result) throws Exception {
+        int totalFrames = 0;
+        for (int degrees : new int[]{-165, -75, 75, 165}) {
+            Matrix rotate = new Matrix();
+            rotate.postRotate(degrees);
+            Bitmap tilted = Bitmap.createBitmap(portrait, 0, 0, portrait.getWidth(),
+                    portrait.getHeight(), rotate, false);
+            try {
+                DetectionOrientation direction = new DetectionOrientation();
+                boolean found = false;
+                for (int frame = 1; frame <= 4; frame++) {
+                    int selected = direction.rotationFor(0);
+                    List<Face> faces = await(detector.process(InputImage.fromBitmap(tilted, selected)));
+                    float roll = faces.size() == 1 ? faces.get(0).getHeadEulerAngleZ() : 0;
+                    direction.observe(faces.size(), roll);
+                    if (faces.size() == 1 && Math.abs(roll) <= FrameQualityPolicy.MAX_ABS_ROLL) {
+                        require(selected == (360 - Math.round(degrees / 90f) * 90) % 360,
+                                "tilted direction " + degrees);
+                        totalFrames += frame;
+                        found = true;
+                        break;
+                    }
+                }
+                require(found, "tilted face recovered " + degrees);
+            } finally { tilted.recycle(); }
+        }
+        result.putInt("tiltedDirectionSearchFrames", totalFrames);
+    }
+
     private static void compareVerification(Context context, SingleFaceDetector detector,
-            InputImage image, Bitmap portrait, Face face, Bundle result) throws Exception {
-        android.graphics.Rect box = face.getBoundingBox();
-        Bitmap crop = Bitmap.createBitmap(portrait, box.left, box.top, box.width(), box.height());
-        Bitmap aligned = Bitmap.createScaledBitmap(crop, 112, 112, false);
-        int[] pixels = new int[112 * 112];
-        aligned.getPixels(pixels, 0, 112, 0, 0, 112, 112);
-        if (aligned != crop) aligned.recycle();
-        if (crop != portrait) crop.recycle();
-        ByteBuffer input = MobileFaceEmbedder.allocateInput();
+            Bitmap portrait, Bundle result) throws Exception {
+        PortraitYuvFrame[] frames = new PortraitYuvFrame[5];
+        for (int i = 0; i < frames.length; i++) frames[i] = new PortraitYuvFrame(portrait, i * 2);
+        FaceFrameExtractor extractor = new FaceFrameExtractor(true);
         ExecutorService verifier = Executors.newSingleThreadExecutor();
         long[][] times = new long[2][12];
         try {
@@ -160,7 +212,7 @@ final class CapturePipelineChecks {
                     for (int step = 0; step < 2; step++) {
                         int lane = (round + 2 + step) % 2;
                         long start = SystemClock.elapsedRealtimeNanos();
-                        results[lane] = verifyFiveFrames(detector, image, pixels, input, model,
+                        results[lane] = verifyFiveFrames(detector, frames, extractor, model,
                                 verifier, lane == 1);
                         if (round >= 0) times[lane][round] = SystemClock.elapsedRealtimeNanos() - start;
                     }
@@ -168,11 +220,25 @@ final class CapturePipelineChecks {
                             "overlap changed the order or contents of the embeddings");
                     require(!Arrays.equals(results[1][0], results[1][4]),
                             "two distinct inputs must produce different embeddings");
+                    if (round == 0) {
+                        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+                        ByteBuffer vector = ByteBuffer.allocate(EmbeddingIdentity.DIMENSIONS * Float.BYTES)
+                                .order(ByteOrder.LITTLE_ENDIAN);
+                        for (float[] embedding : results[1]) {
+                            vector.asFloatBuffer().put(embedding);
+                            digest.update(vector.array());
+                        }
+                        result.putString("publicFixtureEmbeddingSha256", android.util.Base64
+                                .encodeToString(digest.digest(), android.util.Base64.NO_WRAP));
+                    }
                 }
             } finally {
                 verifier.submit(model::close).get(10, TimeUnit.SECONDS);
             }
-        } finally { verifier.shutdown(); }
+        } finally {
+            verifier.shutdown();
+            extractor.clear();
+        }
         String[] names = {"serialFiveFrames", "pipelinedFiveFrames"};
         for (int lane = 0; lane < 2; lane++) {
             Arrays.sort(times[lane]);
@@ -180,25 +246,21 @@ final class CapturePipelineChecks {
                     (times[lane][5] + times[lane][6]) / 2000);
         }
         result.putInt("comparedPipelinedEmbeddings", 5 * (times[0].length + 2));
+        result.putString("pipelineInput", "public portrait, NV21, aligned RGB");
     }
 
-    private static float[][] verifyFiveFrames(SingleFaceDetector detector, InputImage image,
-            int[] pixels, ByteBuffer input, MobileFaceEmbedder model, ExecutorService verifier,
+    private static float[][] verifyFiveFrames(SingleFaceDetector detector, PortraitYuvFrame[] frames,
+            FaceFrameExtractor extractor, MobileFaceEmbedder model, ExecutorService verifier,
             boolean overlap) throws Exception {
         float[][] vectors = new float[5][];
         Future<float[]> previous = null;
         for (int frame = 0; frame < vectors.length; frame++) {
-            require(await(detector.process(image)).size() == 1, "single face benchmark frame");
+            PortraitYuvFrame image = frames[frame];
+            List<Face> faces = await(detector.process(image.input));
             if (previous != null) vectors[frame - 1] = previous.get(10, TimeUnit.SECONDS);
-            input.clear();
-            for (int pixel : pixels) {
-                for (int shift = 16; shift >= 0; shift -= 8) {
-                    int value = Math.min(255, ((pixel >> shift) & 0xff) + 10 * frame);
-                    input.putFloat((value - 127.5f) / 128f);
-                }
-            }
-            input.flip();
-            Future<float[]> current = verifier.submit(() -> model.embed(input));
+            FaceFrameExtractor.Result sample = extractor.extract(image, 0, faces);
+            require(sample.reason == FrameQualityPolicy.Reason.NONE, "public frame quality " + sample.reason);
+            Future<float[]> current = verifier.submit(() -> model.embed(extractor.neuralInput));
             if (overlap) previous = current;
             else vectors[frame] = current.get(10, TimeUnit.SECONDS);
         }

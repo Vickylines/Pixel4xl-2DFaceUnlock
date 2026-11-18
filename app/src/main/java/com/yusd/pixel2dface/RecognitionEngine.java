@@ -73,17 +73,17 @@ final class RecognitionEngine {
             clear();
             return rejected(problem);
         }
-        if (!model.validSample(texture, geometry)) {
+        float frameThreshold = Math.max(model.minimumThreshold(), baseThreshold
+                - FrameQualityPolicy.posePenalty(sample) - FrameQualityPolicy.qualityPenalty(sample)
+                - FrameQualityPolicy.framingPenalty(sample));
+        IdentityEvidence match = model.evaluate(texture, geometry, frameThreshold);
+        if (match == IdentityEvidence.INVALID) {
             clear();
             return rejected(FrameQualityPolicy.Reason.INVALID_DESCRIPTOR);
         }
         // A long sensor gap must also reset the eye counter, not just the vote window.
         if (stabilizer.hasGap(capturedAtMs)) openEyeFrames = 0;
         if (openEyeFrames < Integer.MAX_VALUE) openEyeFrames++;
-        float frameThreshold = Math.max(model.minimumThreshold(), baseThreshold
-                - FrameQualityPolicy.posePenalty(sample) - FrameQualityPolicy.qualityPenalty(sample)
-                - FrameQualityPolicy.framingPenalty(sample));
-        IdentityEvidence match = model.evaluate(texture, geometry, frameThreshold);
         boolean strong = match.highConfidence
                 && FrameQualityPolicy.highQuality(sample);
         RecognitionStabilizer.Result votes = stabilizer.add(match.score,
@@ -95,7 +95,7 @@ final class RecognitionEngine {
     }
 
     private Decision rejected(FrameQualityPolicy.Reason reason) {
-        return new Decision(reason, IdentityEvidence.rejected(),
+        return new Decision(reason, IdentityEvidence.INVALID,
                 RecognitionStabilizer.Result.empty(), baseThreshold, false, 0);
     }
 
