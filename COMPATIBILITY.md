@@ -19,7 +19,7 @@
 | Android 14 | 34 | 支持 | 兼容 AOSP 新版 SystemUI 回调 |
 | Android 15 | 35 | 支持 | 适配新版 SystemUI 类名及多用户解析 |
 | Android 16 | 36 | 支持 | 通用 SystemUI 适配层 |
-| Android 17 | 37 | 支持 | 在 Pixel 4 XL / LineageOS 24.0 上完整验证 |
+| Android 17 | 37 | 支持 | 适配最新 AOSP 及 LineageOS 认证接口 |
 
 ---
 

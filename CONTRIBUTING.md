@@ -7,7 +7,7 @@
 ## 报告 Issue
 
 提交 Issue 时，请尽量提供详细的环境信息以帮助定位问题：
-- **设备型号**：如 Pixel 4 XL、Pixel 7 等
+- **设备型号**：如 Pixel 7、三星、小米、一加等具体机型
 - **系统版本**：Android 版本及具体的 ROM 名称（如 LineageOS 21、AOSP 等）
 - **框架版本**：LSPosed / Xposed 框架的具体版本
 - **问题描述**：复现步骤、实际表现与预期结果
@@ -18,7 +18,7 @@
 ## 提交 Pull Request
 
 1. **保持核心逻辑安全**：人脸识别与认证涉及锁屏安全边界，任何修改不得破坏系统的默认保护（如开机首次解锁强制回退 PIN 等安全规则）。
-2. **本地编译与测试**：在提交代码前，请确保本地通过编译与测试：
+2. **本地编译与检查**：在提交代码前，请确保本地通过编译与代码检查：
    ```bash
    ./gradlew :app:testDebugUnitTest :app:assembleRelease :app:lintRelease
    ```
