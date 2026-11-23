@@ -51,12 +51,15 @@ final class UnlockSessionState {
         readinessPending = false;
         if (preparingGeneration == generation
                 || isHostActive(now) || hasPassiveAuthentication(now) || hasPendingResult(now)
-                || (lastLaunchAt >= 0L && now >= lastLaunchAt
-                && now - lastLaunchAt < LAUNCH_COOLDOWN_MS)) {
+                || launchDelay(now) > 0) {
             return false;
         }
         preparingGeneration = generation;
         return true;
+    }
+
+    long launchDelay(long now) {
+        return lastLaunchAt >= 0 && now >= lastLaunchAt ? Math.max(0,LAUNCH_COOLDOWN_MS-(now-lastLaunchAt)) : 0;
     }
 
     boolean isPreparing(long expectedGeneration) {

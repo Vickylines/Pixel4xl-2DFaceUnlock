@@ -123,6 +123,7 @@ final class AnimationGallery {
             button.setOnClickListener(view -> preview.state(target));
             if (state == 0) states.check(button.getId());
         }
+        preview.onRetry = () -> states.check(states.getChildAt(0).getId());
         return states;
     }
 
@@ -134,12 +135,14 @@ final class AnimationGallery {
         bitmap.setDensity(context.getResources().getDisplayMetrics().densityDpi);
         Canvas canvas = new Canvas(bitmap);
         canvas.scale(bitmap.getWidth() / (float) width, bitmap.getHeight() / (float) height);
-        view.draw(canvas);
+        view.drawThumbnail(canvas);
         return new BitmapDrawable(context.getResources(), bitmap);
     }
 
     private static final class Preview extends FrameLayout {
         private UnlockFaceAnimationView active, outgoing;
+        private RetrySwipeTarget retryTarget;
+        private Runnable onRetry;
         private int style, state;
         Preview(Context context, int style) {
             super(context);
@@ -156,10 +159,33 @@ final class AnimationGallery {
             if (state != 0 || target == 0) replace();
             state = target;
             if (target == 1) active.showSuccess();
-            else if (target == 2) active.showFailure("");
+            else if (target == 2) {
+                active.showFailure(true);
+                UnlockFaceAnimationView failed = active;
+                postDelayed(() -> {
+                    if (active != failed || state != 2 || !isAttachedToWindow()) return;
+                    retryTarget = new RetrySwipeTarget(active, () -> {
+                        state = 0;
+                        active.retrySearching(false);
+                        clearRetryTarget();
+                        if (onRetry != null) onRetry.run();
+                    });
+                    retryTarget.place(this);
+                }, failed.motionDelay(650));
+            }
             active.setContentDescription(target == 0 ? "识别中" : target == 1 ? "识别成功" : "识别失败");
         }
+        private void clearRetryTarget() {
+            RetrySwipeTarget old = retryTarget;
+            retryTarget = null;
+            if (old != null) removeView(old);
+        }
+        @Override protected void onLayout(boolean changed,int l,int t,int r,int b) {
+            super.onLayout(changed,l,t,r,b);
+            if (retryTarget != null) retryTarget.place(this);
+        }
         private void replace() {
+            clearRetryTarget();
             if (outgoing != null) {
                 outgoing.animate().cancel();
                 removeView(outgoing);

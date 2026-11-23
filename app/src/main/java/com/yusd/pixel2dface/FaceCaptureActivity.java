@@ -327,12 +327,25 @@ public class FaceCaptureActivity extends ComponentActivity {
         if (!finished.compareAndSet(false, true)) return;
         if (recordFailure) {
             TemplateStore.RecognitionSettings failedSettings = settings;
-            StoreTasks.execute(() -> TemplateStore.validateAndRecordFailure(this, failedSettings));
+            main.post(this::closeCamera);
+            StoreTasks.execute(() -> {
+                boolean saved = TemplateStore.validateAndRecordFailure(this, failedSettings);
+                boolean retry = false;
+                if (saved && isUnlock()) {
+                    TemplateStore.StateSnapshot state = TemplateStore.readState(this);
+                    retry = state.enabled && state.enrolled && state.revision == failedSettings.state.revision
+                            && state.lockoutUntil <= System.currentTimeMillis();
+                }
+                publishFailure(message,retry);
+            });
+            return;
         }
         publishFailure(message);
     }
 
-    private void publishFailure(String message) {
+    private void publishFailure(String message) { publishFailure(message,false); }
+
+    private void publishFailure(String message, boolean canRetry) {
         logOutcome("failure: " + message);
         main.post(() -> {
             if (host != null) host.releaseLockScreen();
@@ -340,7 +353,7 @@ public class FaceCaptureActivity extends ComponentActivity {
             if (isFinishing() || isDestroyed()) return;
             if (isUnlock() && sessionToken != null) sendBroadcast(new Intent(Constants.ACTION_UNLOCK_RESULT)
                     .setPackage(Constants.SYSTEM_UI_PACKAGE).putExtra(Constants.EXTRA_SESSION_TOKEN, sessionToken)
-                    .putExtra(Constants.EXTRA_SUCCESS, false));
+                    .putExtra(Constants.EXTRA_SUCCESS, false).putExtra(Constants.EXTRA_CAN_RETRY, canRetry));
             setResult(Activity.RESULT_CANCELED, new Intent().putExtra(Constants.EXTRA_SCORE, bestScore)
                     .putExtra("message", message));
             if (!isUnlock()) {

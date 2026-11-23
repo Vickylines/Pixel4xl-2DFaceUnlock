@@ -34,6 +34,7 @@ public final class MainActivity extends ComponentActivity {
     private static final int REQUEST_ENROLL = 100, REQUEST_TEST = 101, REQUEST_CAMERA = 102;
     private static final boolean VALIDATION = "validation".equals(BuildConfig.BUILD_TYPE);
     private final DeviceCredentialConfirmation credentials = new DeviceCredentialConfirmation(this);
+    private final UpdateDialog updates = new UpdateDialog(this);
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable statusTick = new Runnable() {
         @Override public void run() {
@@ -81,6 +82,7 @@ public final class MainActivity extends ComponentActivity {
     }
     @Override protected void onDestroy() {
         credentials.cancel();
+        updates.close();
         main.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
@@ -321,6 +323,7 @@ public final class MainActivity extends ComponentActivity {
         details += "\n\n面容仅在本机处理。照片或视频也可能通过识别。";
         new MaterialAlertDialogBuilder(this).setTitle("连接与关于").setMessage(details)
                 .setNeutralButton("刷新", (dialog, which) -> refreshState())
+                .setNegativeButton("检查更新", (dialog, which) -> updates.check())
                 .setPositiveButton("完成", null).show();
     }
     private void startCapture(String mode, int requestCode) {

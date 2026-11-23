@@ -1,0 +1,9 @@
+2D人脸解锁 0.13.34
+安装文件 Pixel2DFaceUnlock-universal-0.13.34.apk
+
+1. 从 GitHub Releases 下载通用 APK，用 Android 安装器覆盖安装。
+2. 首次安装需在 LSPosed 启用本模块，作用域选择「系统界面」（com.android.systemui）。
+3. 重启设备后，用原有 PIN、图案或密码完成首次解锁。
+4. 打开「连接与关于」，确认锁屏模块显示运行版本 64。以后可在此点按「检查更新」。
+
+通用 APK 支持 ARM32、ARM64、x86 和 x86_64。安装包摘要见同一发布页的 SHA256SUMS-0.13.34.txt。

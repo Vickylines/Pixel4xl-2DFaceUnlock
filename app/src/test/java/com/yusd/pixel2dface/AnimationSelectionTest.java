@@ -21,6 +21,8 @@ import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.android.controller.ActivityController;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.Implementation;
+import org.robolectric.annotation.Implements;
 import org.robolectric.shadows.ShadowBinder;
 import org.robolectric.util.ReflectionHelpers;
 
@@ -116,11 +118,62 @@ public final class AnimationSelectionTest {
     @Test public void oldOutcomeCleanupCannotEraseANewerWake() {
         feedback.captureRoot(keyguard);
         feedback.scanning(AnimationStyle.FOCUS);
-        feedback.failure();
+        feedback.failure(false,() -> {});
         feedback.scanning(AnimationStyle.ISLAND);
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1100));
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(FocusMotion.FAILURE_DURATION_MS
+                + FocusFailure.HINT_HOLD_MS + 300));
         assertEquals(AnimationStyle.ISLAND, style());
         assertEquals(1f, shown().getAlpha(), .01f);
+    }
+    @Test public void focusDoesNotInviteAnotherSwipeOverTheCredentialScreen() {
+        feedback.captureRoot(keyguard);
+        feedback.scanning(AnimationStyle.FOCUS);
+        feedback.failure(true,() -> {});
+        assertNull(shown());
+        assertFalse(feedback.hasSwipeHint());
+    }
+    @Test
+    @Config(instrumentedPackages = "com.yusd.pixel2dface", shadows = CredentialScreen.class)
+    public void openingTheCredentialScreenDismissesATerminalFailure() {
+        SystemUiSessionCoordinator coordinator = new SystemUiSessionCoordinator(new Handler(Looper.getMainLooper()));
+        feedback = coordinator.feedback;
+        feedback.captureRoot(keyguard);
+        feedback.scanning(AnimationStyle.FOCUS);
+        feedback.failure(false,null);
+        CredentialScreen.showing = false;
+        coordinator.bouncerStateChanged();
+        assertTrue(feedback.hasSwipeHint());
+        CredentialScreen.showing = true;
+        coordinator.bouncerStateChanged();
+        assertNull(shown());
+    }
+    @Test
+    @Config(instrumentedPackages = "com.yusd.pixel2dface", shadows = CredentialScreen.class)
+    public void committedBottomSwipeRequestsOneNewScanAndLeavesTheKeypadAvailable() {
+        SystemUiSessionCoordinator coordinator = new SystemUiSessionCoordinator(new Handler(Looper.getMainLooper()));
+        feedback = coordinator.feedback;
+        feedback.captureRoot(keyguard);
+        feedback.scanning(AnimationStyle.ISLAND);
+        int[] requests = {0};
+        feedback.failure(false,() -> requests[0]++);
+        CredentialScreen.showing = false;
+        coordinator.bouncerStateChanged();
+        assertEquals(0,requests[0]);
+        CredentialScreen.showing = true;
+        coordinator.bouncerStateChanged();
+        coordinator.bouncerStateChanged();
+        assertEquals(1,requests[0]);
+        assertTrue(feedback.waitingForCapture());
+        assertTrue(feedback.retryOnCredentialPage());
+        assertEquals(0,keyguard.getChildCount());
+        feedback.scanning(AnimationStyle.ISLAND);
+        assertFalse(feedback.waitingForCapture());
+        assertFalse(shown().isFailure());
+    }
+    @Implements(value = SystemUiBouncer.class, isInAndroidSdk = false)
+    public static class CredentialScreen {
+        static boolean showing;
+        @Implementation protected boolean isShowing() { return showing; }
     }
     @Test public void rotationRepositionsTheSameOverlay() {
         feedback.captureRoot(keyguard);

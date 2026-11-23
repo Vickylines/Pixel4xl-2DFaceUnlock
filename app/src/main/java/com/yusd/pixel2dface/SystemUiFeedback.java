@@ -6,6 +6,8 @@ import android.os.Looper;
 import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityManager;
+import android.widget.FrameLayout;
 import android.view.WindowInsets;
 import android.view.animation.PathInterpolator;
 
@@ -19,6 +21,10 @@ final class SystemUiFeedback {
     private volatile WeakReference<Object> entryIcon = new WeakReference<>(null);
     private volatile WeakReference<ViewGroup> root = new WeakReference<>(null);
     private UnlockFaceAnimationView animation;
+    private RetrySwipeTarget retryTarget;
+    private Runnable retryAction;
+    private boolean retryOnCredentialPage;
+    private long resultTicket;
     private int style = UnlockFaceAnimationView.STYLE_FACE_ID;
     private boolean scanningRequested;
     private boolean lightRequested;
@@ -59,10 +65,12 @@ final class SystemUiFeedback {
 
     void scanning(int requestedStyle) {
         onMain(() -> {
-            detachAnimation();
+            int nextStyle = AnimationStyle.normalize(requestedStyle);
+            if (waitingForCapture() && style == nextStyle) animation.captureStarted();
+            else detachAnimation();
             lightRequested = false;
             stopLight();
-            style = AnimationStyle.normalize(requestedStyle);
+            style = nextStyle;
             scanningRequested = true;
             showWhenReady();
         });
@@ -105,12 +113,16 @@ final class SystemUiFeedback {
             int width = Math.min(Math.round(176f * density), container.getWidth());
             int height = Math.round(88f * density);
             int statusBar = statusBarInset(container);
-            int top = Math.max(Math.round(84f * density), statusBar + Math.round(28f * density));
+            int top = style == AnimationStyle.FACE
+                    ? Math.max(Math.round(84f * density), statusBar + Math.round(28f * density))
+                    : Math.max(Math.round(8f*density), statusBar + Math.round(3f*density));
             top = Math.min(top, Math.max(statusBar, container.getHeight() - height));
             int left = (container.getWidth() - width) / 2;
             animation.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
             animation.layout(left, top, left + width, top + height);
+            if (retryTarget != null && container instanceof FrameLayout)
+                retryTarget.place((FrameLayout)container);
         } catch (Throwable error) {
             SystemUiLog.error("Native keyguard root rejected animation", error);
         }
@@ -124,24 +136,64 @@ final class SystemUiFeedback {
             UnlockFaceAnimationView shown = animation;
             if (shown != null) {
                 shown.showSuccess();
-                main.postDelayed(() -> dismissIfCurrent(shown),
-                        style == AnimationStyle.FOCUS ? 500L : 800L);
+                dismissAfterResult(shown);
             }
         });
     }
 
-    void failure() {
+    void failure(boolean credentialEntryVisible, Runnable retry) {
         onMain(() -> {
             scanningRequested = false;
             lightRequested = false;
             stopLight();
             UnlockFaceAnimationView shown = animation;
             if (shown != null) {
-                shown.showFailure("请使用密码");
-                // A previous session's delayed cleanup must never remove a new animation.
-                main.postDelayed(() -> dismissIfCurrent(shown), 800L);
+                if (credentialEntryVisible) {
+                    detachAnimation();
+                    return;
+                }
+                ViewGroup parent = root.get();
+                boolean actionable = retry != null && parent instanceof FrameLayout;
+                shown.showFailure(actionable);
+                if (actionable) {
+                    retryAction = retry;
+                    long delay = shown.motionDelay(650);
+                    long pendingTicket = resultTicket + 1;
+                    main.postDelayed(() -> {
+                        if (animation != shown || resultTicket != pendingTicket || !shown.isFailure()) return;
+                        retryTarget = new RetrySwipeTarget(shown, () -> acceptRetry(shown,false));
+                        retryTarget.place((FrameLayout)parent);
+                    },delay);
+                }
+                dismissAfterResult(shown);
             }
         });
+    }
+
+    boolean hasSwipeHint() {
+        return animation != null && (animation.isFailure() || animation.waitingForCapture());
+    }
+
+    boolean waitingForCapture() { return animation != null && animation.waitingForCapture(); }
+    boolean retryOnCredentialPage() { return retryOnCredentialPage; }
+
+    // The keyguard itself recognizes a swipe from the bottom. Use its committed
+    // credential-page transition without intercepting navigation or keypad input.
+    void credentialPageShown() {
+        if (animation == null) return;
+        if (animation.isFailure() && retryAction != null) acceptRetry(animation,true);
+        else if (animation.isFailure() || (waitingForCapture() && !retryOnCredentialPage)) remove();
+    }
+
+    private void acceptRetry(UnlockFaceAnimationView shown, boolean fromCredentialPage) {
+        if (animation != shown || !shown.isFailure() || retryAction == null) return;
+        Runnable action = retryAction;
+        retryAction = null;
+        retryOnCredentialPage = fromCredentialPage;
+        resultTicket++;
+        shown.retrySearching(true);
+        removeRetryTarget();
+        action.run();
     }
 
     void resultHaptic(boolean success) {
@@ -175,14 +227,43 @@ final class SystemUiFeedback {
         screenLight.remove();
     }
 
-    private void dismissIfCurrent(UnlockFaceAnimationView expected) {
-        if (animation != expected) return;
+    private void dismissAfterResult(UnlockFaceAnimationView shown) {
+        long ticket = ++resultTicket;
+        long hold = shown.successHoldMs();
+        if (shown.isFailure()) {
+            AccessibilityManager manager = shown.getContext().getSystemService(AccessibilityManager.class);
+            hold = manager == null ? FocusFailure.HINT_HOLD_MS : manager.getRecommendedTimeoutMillis(
+                    FocusFailure.HINT_HOLD_MS, AccessibilityManager.FLAG_CONTENT_TEXT | AccessibilityManager.FLAG_CONTENT_CONTROLS);
+        }
+        main.postDelayed(() -> dismissIfCurrent(shown,ticket),
+                hold + shown.motionDelay(shown.resultDuration()));
+    }
+
+    private void dismissIfCurrent(UnlockFaceAnimationView expected, long ticket) {
+        if (animation != expected || ticket != resultTicket) return;
+        if (retryTarget != null && retryTarget.tracking()) {
+            main.postDelayed(() -> dismissIfCurrent(expected,ticket),250);
+            return;
+        }
+        retryAction = null;
+        removeRetryTarget();
         expected.animate().alpha(0f).setDuration(160L)
                 .setInterpolator(new PathInterpolator(0.23f, 1f, 0.32f, 1f))
-                .withEndAction(() -> { if (animation == expected) detachAnimation(); }).start();
+                .withEndAction(() -> { if (animation == expected && ticket == resultTicket) detachAnimation(); }).start();
+    }
+
+    private void removeRetryTarget() {
+        RetrySwipeTarget target = retryTarget;
+        retryTarget = null;
+        if (target != null && target.getParent() instanceof ViewGroup)
+            ((ViewGroup)target.getParent()).removeView(target);
     }
 
     private void detachAnimation() {
+        resultTicket++;
+        retryAction = null;
+        retryOnCredentialPage = false;
+        removeRetryTarget();
         UnlockFaceAnimationView shown = animation;
         animation = null;
         try {
@@ -240,6 +321,7 @@ final class SystemUiFeedback {
             return 0;
         }
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
-                ? insets.getInsets(WindowInsets.Type.statusBars()).top : insets.getStableInsetTop();
+                ? insets.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars() | WindowInsets.Type.displayCutout()).top
+                : insets.getStableInsetTop();
     }
 }

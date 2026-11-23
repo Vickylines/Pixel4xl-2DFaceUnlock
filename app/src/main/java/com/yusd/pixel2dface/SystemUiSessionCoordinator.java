@@ -44,6 +44,7 @@ final class SystemUiSessionCoordinator {
     private BroadcastReceiver resultReceiver;
     private BroadcastReceiver powerReceiver;
     private boolean heartbeatPending;
+    private long retryPreparation = -1;
     private long diagnosticGeneration = -1L;
     private int diagnosticLines;
     private static final int MAX_DIAGNOSTIC_LINES_PER_GENERATION = 32;
@@ -75,10 +76,16 @@ final class SystemUiSessionCoordinator {
     }
 
     void wake(Object currentMonitor) {
+        beginWake(currentMonitor,-1);
+    }
+
+    private void beginWake(Object currentMonitor, long retryGeneration) {
         long generation;
         synchronized (lock) {
+            if (retryGeneration >= 0 && !session.isGeneration(retryGeneration)) return;
             generation = session.wake(SystemClock.elapsedRealtime());
             if (generation < 0L) {
+                if (retryGeneration >= 0 && feedback.waitingForCapture()) feedback.remove();
                 trace("wake_rejected", session.generation,
                         "preparing=" + session.isPreparing(session.generation)
                         + ", hostActive=" + session.isHostActive(SystemClock.elapsedRealtime())
@@ -86,6 +93,7 @@ final class SystemUiSessionCoordinator {
                 return;
             }
             monitor = new WeakReference<>(currentMonitor);
+            retryPreparation = retryGeneration >= 0 ? generation : -1;
         }
         trace("wake_accepted", generation, "checking readiness");
         onMain(() -> {
@@ -93,7 +101,7 @@ final class SystemUiSessionCoordinator {
                 trace("wake_stale", generation, "current=" + currentGeneration());
                 return;
             }
-            feedback.remove();
+            if (retryGeneration < 0) feedback.remove();
             SystemUiCompat.clearStoredWeakAuthentication(currentMonitor, -1);
             feedback.unlockedIcon(false);
             // Let the native wake callback finish, then use actual power/keyguard readiness.
@@ -198,6 +206,11 @@ final class SystemUiSessionCoordinator {
             trace("prepare_stale", generation, "current=" + currentGeneration());
             return;
         }
+        if (retryAbandoned(generation)) {
+            synchronized (lock) { session.finishReadiness(generation); }
+            if (feedback.waitingForCapture()) feedback.remove();
+            return;
+        }
         if (attached == null || currentMonitor == null || resultReceiver == null) {
             awaitReadiness(currentMonitor, generation, "context=" + (attached != null)
                     + ", monitor=" + (currentMonitor != null) + ", receiver=" + (resultReceiver != null));
@@ -214,11 +227,13 @@ final class SystemUiSessionCoordinator {
             synchronized (lock) {
                 session.finishReadiness(generation);
             }
+            if (feedback.waitingForCapture()) feedback.remove();
             trace("prepare_rejected", generation, "weakAllowed=" + allowed + ", nativeCanSkip=" + canSkip);
             return;
         }
         synchronized (lock) {
             if (!session.beginPreparation(generation, SystemClock.elapsedRealtime())) {
+                if (feedback.waitingForCapture()) feedback.remove();
                 trace("prepare_rejected", generation, "session gate; preparing="
                         + session.isPreparing(generation) + ", passive="
                         + session.hasPassiveAuthentication(SystemClock.elapsedRealtime()));
@@ -264,6 +279,7 @@ final class SystemUiSessionCoordinator {
             }
         }
         if (delay < 0L) {
+            if (feedback.waitingForCapture()) feedback.remove();
             trace("readiness_expired", generation, reason);
             return;
         }
@@ -277,6 +293,10 @@ final class SystemUiSessionCoordinator {
             Bundle state, String token) {
         if (!isPreparing(generation)) {
             trace("configuration_stale", generation, "current=" + currentGeneration());
+            return;
+        }
+        if (retryAbandoned(generation)) {
+            cancelPreparation(generation,"retry surface dismissed");
             return;
         }
         if (!isEnabled(state) || token == null || state.getLong("revision", -1L) < 0L) {
@@ -354,12 +374,14 @@ final class SystemUiSessionCoordinator {
     }
 
     private void endFailedSession(String token, long generation, String reason) {
-        endFailedSession(token, generation, reason, false);
+        endFailedSession(token, generation, reason, false, false);
     }
 
-    private void endFailedSession(String token, long generation, String reason, boolean recognitionRejected) {
+    private void endFailedSession(String token, long generation, String reason, boolean recognitionRejected, boolean retryable) {
         long cancelledGeneration;
+        int failedUser;
         synchronized (lock) {
+            failedUser = session.sessionUser;
             if (!session.abort(token, generation)) return;
             cancelledGeneration = session.generation;
         }
@@ -368,10 +390,39 @@ final class SystemUiSessionCoordinator {
             SystemUiCompat.clearStoredWeakAuthentication(getMonitor(), -1);
             feedback.unlockedIcon(false);
             if (recognitionRejected) feedback.resultHaptic(false);
-            feedback.failure();
+            Runnable retry = retryable && mayRetry(failedUser,false)
+                    ? () -> requestRetry(cancelledGeneration,failedUser) : null;
+            feedback.failure(bouncer.isShowing(),retry);
         });
         cancelCameraHost(token);
         trace("failed_session_ended", cancelledGeneration, reason);
+    }
+
+    private boolean mayRetry(int user, boolean credentialPage) {
+        Context attached = getContext();
+        Object current = getMonitor();
+        return user >= 0 && attached != null && current != null && bouncer.isShowing() == credentialPage
+                && isLockedAndInteractive(attached) && SystemUiCompat.resolveSelectedUserId(current) == user
+                && SystemUiCompat.isWeakBiometricAllowed(current,user) && !SystemUiCompat.canSkipBouncer(current,user);
+    }
+
+    private boolean retryAbandoned(long generation) {
+        synchronized (lock) { if (retryPreparation != generation) return false; }
+        return !feedback.waitingForCapture() || bouncer.isShowing() != feedback.retryOnCredentialPage();
+    }
+
+    // The gesture requests the same fresh preparation as a wake. It never supplies a match.
+    private void requestRetry(long expectedGeneration, int user) {
+        long delay;
+        synchronized (lock) {
+            if (!session.isGeneration(expectedGeneration)) return;
+            delay = session.launchDelay(SystemClock.elapsedRealtime());
+        }
+        main.postDelayed(() -> {
+            if (!isGeneration(expectedGeneration) || !feedback.waitingForCapture()) return;
+            if (!mayRetry(user,feedback.retryOnCredentialPage())) { feedback.remove(); return; }
+            beginWake(getMonitor(),expectedGeneration);
+        },delay);
     }
 
     private void cancelCameraHost(String token) {
@@ -389,9 +440,16 @@ final class SystemUiSessionCoordinator {
         });
     }
 
-    /** Reconciles success with a swipe that commits after the initial result was delivered. */
+    /** Updates result feedback and handles a swipe that commits after a passive match. */
     void bouncerStateChanged() {
         onMain(() -> {
+            if (feedback.hasSwipeHint()) {
+                if (bouncer.isShowing()) {
+                    feedback.credentialPageShown();
+                } else if (feedback.waitingForCapture() && feedback.retryOnCredentialPage()) {
+                    feedback.remove();
+                }
+            }
             synchronized (lock) {
                 if (!session.hasPassiveAuthentication(SystemClock.elapsedRealtime())) return;
             }
@@ -633,7 +691,8 @@ final class SystemUiSessionCoordinator {
         trace("result_received", generation, "success=" + success
                 + ", sessionAgeMs=" + sessionAgeMs());
         if (!success || currentMonitor == null) {
-            endFailedSession(token, generation, success ? "monitor unavailable" : "capture failed", !success);
+            endFailedSession(token, generation, success ? "monitor unavailable" : "capture failed", !success,
+                    !success && intent.getBooleanExtra(Constants.EXTRA_CAN_RETRY,false));
             return;
         }
         Context attached = getContext();

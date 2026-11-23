@@ -18,6 +18,7 @@ public final class Constants {
     public static final String EXTRA_MODE = "mode";
     public static final String EXTRA_SESSION_TOKEN = "session_token";
     public static final String EXTRA_SUCCESS = "success";
+    static final String EXTRA_CAN_RETRY = "can_retry";
     public static final String EXTRA_SCORE = "score";
     public static final String EXTRA_STORE_REVISION = "store_revision";
     public static final String EXTRA_ACTIVITY_TOKEN = "activity_token";

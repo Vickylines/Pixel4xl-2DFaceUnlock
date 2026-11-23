@@ -7,9 +7,7 @@
         android:name="${applicationId}.permission.SEND_SIGNALS"
         android:protectionLevel="signature" />
     <uses-permission android:name="${applicationId}.permission.SEND_SIGNALS" />
-    <uses-permission
-        android:name="android.permission.INTERNET"
-        tools:node="remove" />
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission
         android:name="android.permission.ACCESS_NETWORK_STATE"
         tools:node="remove" />
@@ -76,6 +74,11 @@
             android:authorities="${applicationId}.config"
             android:directBootAware="false"
             android:exported="true" />
+
+        <!-- Keep the bundled ML Kit telemetry backend disabled when manual updates have Internet access. -->
+        <service
+            android:name="com.google.android.datatransport.runtime.backends.TransportBackendDiscovery"
+            tools:node="remove" />
 
     </application>
 
