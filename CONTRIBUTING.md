@@ -1,16 +1,26 @@
-# 参与贡献
+# 贡献指南
 
-欢迎提交 Issue 和 Pull Request。提交前请：
+感谢关注并参与本项目的开发与改进！在提交 Issue 或 Pull Request 前，请阅读以下说明：
 
-1. 写明 Pixel 型号、Android/API、ROM、Magisk 与 LSPosed 版本。
-2. 区分“编译通过”“模块已加载”和“锁屏端到端验证”，不要把源码适配写成真机验证。
-3. 不要提交人脸模板、设备备份、签名文件、访问令牌或包含私人信息的完整日志。
-4. 保持认证失败关闭：关键用户、策略或 SystemUI 状态无法确认时，必须保持锁定。
-5. 运行 `./gradlew :app:testDebugUnitTest :app:assembleRelease :app:lintRelease :app:assembleDebugAndroidTest --no-daemon`，确认单元测试、Release 构建、Lint 和设备测试 APK 编译通过。Windows 可运行 `build.ps1`，额外传入设备测试构建任务。
+---
 
-修改存储、迁移、授权或 Provider 时，连接测试设备并运行 `adb shell am instrument -w com.yusd.pixel2dface.test/com.yusd.pixel2dface.StorageInstrumentation`；先安装应用和设备测试 APK。测试使用合成数据与隔离缓存目录，不使用真实录入。实际相机、锁屏和跨 ROM 路径另需人工复测，不能用设备测试 APK 编译成功代替。
+## 报告 Issue
 
-GitHub CI 的 APK 供构建检查使用，签名取决于 CI 环境。公开升级包应核对既有签名、版本、SHA-256 和实际覆盖安装结果；不要将 CI 产物直接当作已验收的升级包。实现边界见 [架构说明](ARCHITECTURE.md)，已有设备证据见 [真机验证记录](dist/DEVICE-VERIFICATION-0.13.2-20261109.md)。
+提交 Issue 时，请尽量提供详细的环境信息以帮助定位问题：
+- **设备型号**：如 Pixel 4 XL、Pixel 7 等
+- **系统版本**：Android 版本及具体的 ROM 名称（如 LineageOS 21、AOSP 等）
+- **框架版本**：LSPosed / Xposed 框架的具体版本
+- **问题描述**：复现步骤、实际表现与预期结果
+- **框架日志**：包含 `Pixel2DFaceUnlock` 或 `2D人脸解锁` 的相关日志片段（**注意：请在提交前隐去个人隐私、账户与敏感信息**）
 
-修改构建变体或模块声明时，同时构建 `:app:assembleValidation :app:assembleValidationAndroidTest -Pvalidation`，并分别运行正式包和验证包设备测试。`xposed_init` 只放在 `app/src/module/assets`，不要恢复到所有变体共用的 main 资源；验证包不应含任何 Xposed 模块发现元数据。
+---
 
+## 提交 Pull Request
+
+1. **保持核心逻辑安全**：人脸识别与认证涉及锁屏安全边界，任何修改不得破坏系统的默认保护（如开机首次解锁强制回退 PIN 等安全规则）。
+2. **本地编译与测试**：在提交代码前，请确保本地通过编译与测试：
+   ```bash
+   ./gradlew :app:testDebugUnitTest :app:assembleRelease :app:lintRelease
+   ```
+   Windows 环境下亦可直接使用 `build.ps1`。
+3. **隐私合规**：严禁在代码、资源或测试用例中提交任何真实的人脸照片、特征模板或私有签名证书。
